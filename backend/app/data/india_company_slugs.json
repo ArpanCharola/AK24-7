@@ -1,0 +1,54 @@
+{
+  "_comment": "Indian-employer ATS slugs for Tier-1 discovery. 'verified_live' groups were probed live (HTTP 200 + India roles) on 2026-05-31; 'assumed' groups have a valid endpoint shape but were not confirmed to carry India roles at probe time — see Others/status/A1-discovery.md.",
+  "greenhouse": [
+    "phonepe",
+    "tekion",
+    "groww",
+    "postman",
+    "druva",
+    "narvar",
+    "slice"
+  ],
+  "lever": [
+    "meesho",
+    "mindtickle",
+    "fampay",
+    "zeta",
+    "cred",
+    "epifi"
+  ],
+  "ashby": [
+    "atlan",
+    "navi",
+    "scaler",
+    "sarvam",
+    "composio",
+    "spotdraft",
+    "nirvana"
+  ],
+  "smartrecruiters": [
+    "Visa",
+    "Bosch",
+    "PublicisSapient"
+  ],
+  "workable": [
+    "instahyre",
+    "whatfix",
+    "medibuddy",
+    "ultrahuman",
+    "fitterfly",
+    "springworks",
+    "invideo"
+  ],
+  "recruitee": [],
+  "breezy": [
+    "squadstack"
+  ],
+  "personio": [],
+  "workday": [
+    { "company": "NVIDIA", "subdomain": "nvidia", "tenant": "5", "site": "NVIDIAExternalCareerSite" },
+    { "company": "Intel", "subdomain": "intel", "tenant": "1", "site": "External" },
+    { "company": "Salesforce", "subdomain": "salesforce", "tenant": "12", "site": "External_Career_Site" }
+  ],
+  "zoho": []
+}

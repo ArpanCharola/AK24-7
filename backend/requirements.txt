@@ -1,0 +1,52 @@
+# Web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Auth
+python-jose[cryptography]==3.3.0
+bcrypt==5.0.0
+
+# Config
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# Task queue (Celery retained for legacy apply tasks; APScheduler is the lean scheduler)
+celery[redis]==5.4.0
+redis==5.2.0
+APScheduler==3.10.4
+
+# India job sources
+feedparser==6.0.11          # Tier-2: TimesJobs RSS + other RSS feeds
+python-jobspy==1.1.80       # Tier-3: naukri/indeed/linkedin/google/glassdoor scraping
+beautifulsoup4==4.12.3      # JD-from-URL extraction + JSON-LD/HTML scrape parsing
+lxml==5.3.0
+
+# Vector search (fast-follow: needs a pgvector-enabled Postgres image)
+pgvector==0.3.6
+
+# Browser automation
+playwright==1.49.0
+
+# HTTP client (used for OpenAI API calls and general requests)
+httpx==0.28.0
+
+# Google OAuth (Gmail "connect email" — application confirmation/lifecycle tracking)
+google-auth==2.37.0
+google-auth-oauthlib==1.2.1
+
+# Utilities
+python-multipart==0.0.18
+email-validator==2.2.0
+openpyxl==3.1.5
+pypdf==4.3.1
+
+# Resume builder integration (in-process import of skilluence/resume-formatter)
+pdfplumber==0.11.4
+python-docx==1.1.2
+docx2pdf==0.1.8
+pywin32>=308; sys_platform == "win32"

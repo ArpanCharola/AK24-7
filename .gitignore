@@ -1,0 +1,29 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/.env
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
+
+# User-uploaded content (PII — résumés, cover letters, tailored output)
+backend/uploads/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Nested shadcn admin dashboard reference template — not part of this project
+/ai apply/
+
+# Claude Code local state (not part of the application)
+.claude/
+
+# Playwright MCP session captures (console logs, screenshots) — local artifacts
+.playwright-mcp/
+
+# OS
+.DS_Store
+Thumbs.db

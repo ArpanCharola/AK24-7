@@ -1,0 +1,146 @@
+# Production docker-compose.
+#
+# Use this on Dokploy / VPS. The original docker-compose.yml stays as the
+# dev stack (uses --reload, bind mounts, Vite dev server).
+#
+# Bring up locally to test:
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# On Dokploy: import this file as the compose source for the project, then
+# attach the prod .env via the UI. Override VITE_API_URL/VITE_WS_URL as
+# build args on the frontend service.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_apply}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Migration job (runs once on each deploy, before api starts serving) ───
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    env_file: ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ─── API (gunicorn + uvicorn workers) ─────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Default CMD in Dockerfile already runs gunicorn — no override needed.
+    env_file: ./backend/.env
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"  # remove in Dokploy if Traefik handles ingress
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ─── Celery worker (apply agent + email scan + follow-ups + discovery) ────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # --concurrency=4 is a sane default for a small-to-medium VPS.
+    # Bump if discovery + apply runs queue up.
+    # --max-tasks-per-child recycles workers so Playwright leaks don't grow.
+    command: ["celery", "-A", "app.workers.celery_app", "worker",
+              "--loglevel=info",
+              "--concurrency=4",
+              "--max-tasks-per-child=50"]
+    env_file: ./backend/.env
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # ─── Celery beat (scheduled tasks) — MUST be exactly 1 replica ────────────
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["celery", "-A", "app.workers.celery_app", "beat",
+              "--loglevel=info",
+              "--schedule=/tmp/celerybeat-schedule"]
+    env_file: ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 1
+      mode: replicated
+
+  # ─── Frontend (nginx static serve) ────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Override at deploy time. Dokploy lets you set build args per env.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
+        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000/ws}
+    restart: unless-stopped
+    expose:
+      - "80"
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

@@ -1,0 +1,305 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Base
+   ───────────────────────────────────────────────────────────────────────── */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* shadcn neutral (zinc) theme tokens — light + dark */
+:root {
+  --background: 240 5% 96%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --ring: 240 5% 50%;
+  --radius: 0.5rem;
+}
+.dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 6% 10%;
+  --card-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 18%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --ring: 240 4.9% 50%;
+}
+
+body {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  letter-spacing: -0.01em;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.025em;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Custom scrollbar
+   ───────────────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.14);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.28);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+* { scrollbar-width: thin; scrollbar-color: rgba(15, 23, 42, 0.18) transparent; }
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+.dark * { scrollbar-color: rgba(255, 255, 255, 0.12) transparent; }
+
+/* Selection */
+::selection { background: hsl(var(--foreground) / 0.15); }
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Glass system — light mode
+   ───────────────────────────────────────────────────────────────────────── */
+@layer components {
+  /* Flat shadcn surfaces — cards on the neutral canvas, separated by borders. */
+  .glass {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+
+  .glass-subtle {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+  }
+
+  .glass-strong {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Dark surface kept for the live agent console (a terminal-style panel). */
+  .glass-dark {
+    background: hsl(240 10% 8%);
+    border: 1px solid hsl(240 4% 18%);
+    border-radius: 0.75rem;
+    box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4);
+  }
+
+  .input-glass {
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--input));
+    border-radius: calc(var(--radius) - 2px);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+    width: 100%;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .input-glass:hover { border-color: hsl(var(--ring) / 0.6); }
+  .input-glass:focus {
+    outline: none;
+    border-color: hsl(var(--ring));
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.25);
+  }
+  .input-glass::placeholder { color: hsl(var(--muted-foreground)); }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: calc(var(--radius) - 2px);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: hsl(var(--primary-foreground));
+    background: hsl(var(--primary));
+    border: 1px solid transparent;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    transition: opacity 150ms ease;
+    cursor: pointer;
+  }
+  .btn-primary:hover:not(:disabled) { opacity: 0.9; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: calc(var(--radius) - 2px);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: hsl(var(--foreground));
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    transition: background-color 150ms ease, border-color 150ms ease;
+    cursor: pointer;
+  }
+  .btn-secondary:hover:not(:disabled) { background: hsl(var(--muted)); }
+  .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: calc(var(--radius) - 2px);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+    background: transparent;
+    border: 1px solid transparent;
+    transition: all 150ms ease;
+    cursor: pointer;
+  }
+  .btn-ghost:hover {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  /* No more rainbow — headline text reads as the neutral foreground. */
+  .text-gradient { color: hsl(var(--foreground)); }
+}
+
+/* Dark mode is handled entirely by the CSS variables above — the flat .glass*,
+   .input-glass and .btn-* classes read hsl(var(--card)) / --border / --primary,
+   which the .dark block already remaps. No per-class dark overrides needed. */
+
+.mesh-noise {
+  position: absolute;
+  inset: 0;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/></svg>");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  canvas { display: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Dark mode — Tailwind utility overrides
+   Higher specificity than single-class Tailwind rules; no !important needed.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Text colors */
+.dark .text-slate-900,
+.dark .text-slate-800  { color: #f8fafc; }
+.dark .text-slate-700  { color: #e2e8f0; }
+.dark .text-slate-600  { color: #cbd5e1; }
+.dark .text-slate-500  { color: #94a3b8; }
+.dark .text-slate-400  { color: #64748b; }
+
+.dark .text-accent-600 { color: #d4d4d8; }
+.dark .text-accent-500 { color: #a1a1aa; }
+
+/* Hover text */
+.dark .hover\:text-slate-900:hover { color: #f8fafc; }
+.dark .hover\:text-slate-600:hover { color: #e2e8f0; }
+.dark .hover\:text-accent-700:hover { color: #f4f4f5; }
+.dark .hover\:text-rose-600:hover   { color: #fb7185; }
+
+/* Backgrounds */
+.dark .bg-white\/40  { background-color: rgba(255, 255, 255, 0.04); }
+.dark .bg-white\/50  { background-color: rgba(255, 255, 255, 0.05); }
+.dark .bg-white\/55  { background-color: rgba(255, 255, 255, 0.06); }
+.dark .bg-white\/85  { background-color: rgba(255, 255, 255, 0.1); }
+
+/* Hover backgrounds */
+.dark .hover\:bg-white\/40:hover  { background-color: rgba(255, 255, 255, 0.06); }
+.dark .hover\:bg-white\/55:hover  { background-color: rgba(255, 255, 255, 0.08); }
+.dark .hover\:bg-rose-50\/70:hover { background-color: rgba(239, 68, 68, 0.1); }
+
+/* Borders */
+.dark .border-white\/40  { border-color: rgba(255, 255, 255, 0.1); }
+.dark .border-slate-200  { border-color: rgba(255, 255, 255, 0.1); }
+.dark .border-slate-300  { border-color: rgba(255, 255, 255, 0.12); }
+
+/* Semantic — emerald (success states) */
+.dark .text-emerald-600   { color: #34d399; }
+.dark .text-emerald-700   { color: #34d399; }
+.dark .text-emerald-500   { color: #34d399; }
+.dark .bg-emerald-50      { background-color: rgba(6, 78, 59, 0.3); }
+.dark .bg-emerald-50\/30  { background-color: rgba(6, 78, 59, 0.2); }
+.dark .border-emerald-200 { border-color: rgba(52, 211, 153, 0.2); }
+.dark .border-emerald-300 { border-color: rgba(52, 211, 153, 0.3); }
+.dark .hover\:border-emerald-400:hover { border-color: rgba(52, 211, 153, 0.5); }
+
+/* Semantic — accent (now neutral zinc, drag/active states) */
+.dark .bg-accent-50\/40   { background-color: rgba(255, 255, 255, 0.06); }
+.dark .border-accent-500  { border-color: rgba(255, 255, 255, 0.3); }
+.dark .hover\:border-accent-400:hover { border-color: rgba(255, 255, 255, 0.25); }
+.dark .hover\:text-accent-600:hover   { color: #e4e4e7; }
+
+/* Misc component backgrounds used across pages */
+.dark .hover\:bg-accent-50\/40:hover { background-color: rgba(255, 255, 255, 0.05); }

@@ -1,0 +1,38 @@
+.tracker-list-page {
+  padding: 24px;
+}
+
+.tracker-list-page h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.tracker-list-page .muted {
+  color: #6b7280;
+}
+
+.tracker-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.tracker-table th,
+.tracker-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.tracker-table thead th {
+  color: #6b7280;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.tracker-table tbody tr:hover {
+  background: #f9fafb;
+}
