@@ -20,6 +20,10 @@ frontend/.env
 
 # Claude Code local state (not part of the application)
 .claude/
+CLAUDE.md
+
+# Deployment notes — local only
+DEPLOY.md
 
 # Playwright MCP session captures (console logs, screenshots) — local artifacts
 .playwright-mcp/
