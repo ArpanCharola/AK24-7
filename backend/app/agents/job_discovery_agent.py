@@ -437,6 +437,9 @@ class JobDiscoveryAgent:
     async def discover(self, profile: dict, queries: list[str] | None = None) -> list[dict]:
         from app.agents.ats_sources import fetch_all_ats
         from app.agents.scrape_sources import fetch_all_scraped
+        from app.agents.india_board_sources import fetch_all_india_boards
+        from app.agents.wellfound_source import fetch_all_wellfound
+        from app.agents.hirect_source import fetch_all_hirect
         from app.services.jobs_aggregators import fetch_all_aggregators
 
         slugs = _load_india_slugs()
@@ -459,6 +462,9 @@ class JobDiscoveryAgent:
                 fetch_all_ats(client, slugs, profile, posted_within),
                 fetch_all_aggregators(client, queries, locations),
                 fetch_all_scraped(queries, locations),
+                fetch_all_india_boards(client, queries, locations),
+                fetch_all_wellfound(queries, locations),
+                fetch_all_hirect(client, queries, locations),
                 return_exceptions=True,
             )
 

@@ -16,11 +16,15 @@ Returns normalized job dicts (contract #3); India filtering happens downstream.
 import asyncio
 import logging
 import math
+import random
 from datetime import datetime, timezone
 
 from app.agents.job_discovery_agent import _detect_work_arrangement, _normalize, _strip_html
+from app.agents.proxy_pool import circuit, proxy_pool
 
 logger = logging.getLogger(__name__)
+
+_QUERY_JITTER = (1.0, 3.0)   # seconds slept between queries to look less bot-like
 
 # jobspy site name → settings toggle attr + sensible default.
 _SITES = {
@@ -70,14 +74,18 @@ def _salary_raw(rec: dict) -> str | None:
     return f"{body} {interval}".strip()
 
 
-def _scrape_blocking(site: str, query: str, location: str, proxies: list[str] | None) -> list[dict]:
+def _scrape_blocking(site: str, query: str, location: str, proxies: list[str] | None) -> tuple[list[dict], bool]:
     """Runs in a worker thread. Imports jobspy lazily so a missing package or a
-    scraper crash for one site can't take down the module or the run."""
+    scraper crash for one site can't take down the module or the run.
+
+    Returns ``(jobs, ok)``. ``ok`` is False only on a hard failure (missing
+    package / scraper exception) so the circuit breaker can distinguish a block
+    from a legitimately empty result set (an empty board is not a failure)."""
     try:
         from jobspy import scrape_jobs
     except Exception as exc:  # noqa: BLE001 — package may be absent / partially installed
         logger.warning("jobspy unavailable (%s) — Tier-3 returns []", exc)
-        return []
+        return [], False
 
     try:
         df = scrape_jobs(
@@ -90,12 +98,12 @@ def _scrape_blocking(site: str, query: str, location: str, proxies: list[str] | 
             proxies=proxies or None,
             verbose=0,
         )
-    except Exception as exc:  # noqa: BLE001 — any scraper failure → []
+    except Exception as exc:  # noqa: BLE001 — any scraper failure → ([], not ok)
         logger.warning("jobspy %s/%r failed: %s", site, query, exc)
-        return []
+        return [], False
 
     if df is None or getattr(df, "empty", True):
-        return []
+        return [], True
 
     out: list[dict] = []
     for rec in df.to_dict("records"):
@@ -119,22 +127,37 @@ def _scrape_blocking(site: str, query: str, location: str, proxies: list[str] | 
             posted_at=_to_dt(rec.get("date_posted")),
             salary_raw=_salary_raw(rec),
         ))
-    return out
+    return out, True
 
 
 async def _scrape_site(site: str, queries: list[str], location: str, proxies: list[str] | None) -> list[dict]:
+    if not circuit.allow(site):
+        logger.info("Tier-3 %s skipped — circuit open", site)
+        return []
+
     jobs: list[dict] = []
     seen: set[str] = set()
-    for query in queries[:2]:
+    ok_any = False
+    selected = queries[:2]
+    for i, query in enumerate(selected):
         try:
-            recs = await asyncio.to_thread(_scrape_blocking, site, query, location, proxies)
+            recs, ok = await asyncio.to_thread(_scrape_blocking, site, query, location, proxies)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Tier-3 %s/%r thread failed: %s", site, query, exc)
-            continue
+            recs, ok = [], False
+        if ok:
+            ok_any = True
         for j in recs:
             if j["job_url"] not in seen:
                 seen.add(j["job_url"])
                 jobs.append(j)
+        if i < len(selected) - 1:
+            await asyncio.sleep(random.uniform(*_QUERY_JITTER))
+
+    if ok_any:
+        circuit.record_success(site)
+    else:
+        circuit.record_failure(site)
     logger.info("Tier-3 %s: %d jobs", site, len(jobs))
     return jobs
 
@@ -147,7 +170,7 @@ async def fetch_all_scraped(queries: list[str], locations: list[str]) -> list[di
         logger.info("Tier-3 scraping disabled (TIER3_ENABLED=false)")
         return []
 
-    proxies = [p.strip() for p in (getattr(settings, "SCRAPE_PROXIES", "") or "").split(",") if p.strip()]
+    proxies = proxy_pool.as_list()   # jobspy rotates the list itself; None = direct
     location = locations[0] if locations else "India"
 
     enabled = [

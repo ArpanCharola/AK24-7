@@ -45,10 +45,42 @@ class Settings(BaseSettings):
 
     # India job sources (Tier 2). Free; leave blank to disable that source.
     JOOBLE_API_KEY: str = ""          # direct Jooble API: POST https://jooble.org/api/{key}
-    # Tier-3 scraping toggles (all-in but per-source switchable; off by default in hosted env).
-    ENABLE_JOBSPY: bool = False       # python-jobspy: naukri/indeed/linkedin/google/glassdoor
     ENABLE_SCRAPE_TIMESJOBS: bool = True   # official RSS — low risk
-    SCRAPE_PROXIES: str = ""          # comma-separated residential proxies for Tier-3
+
+    # ── Tier-3 scraping (all-in, self-host, free) ────────────────────────────
+    # Master gate. Off by default so a hosted env never scrapes unintentionally;
+    # flip to true (in .env) to enable the per-source toggles below.
+    TIER3_ENABLED: bool = False
+    # Per-source toggles. jobspy boards + the custom adapters. A source that is
+    # off is skipped entirely; a source that is on but fails degrades to [].
+    SCRAPE_INDEED: bool = True
+    SCRAPE_GOOGLE: bool = True
+    SCRAPE_NAUKRI: bool = True
+    SCRAPE_LINKEDIN: bool = True       # Cloudflare/rate-limited — best-effort without proxies
+    SCRAPE_GLASSDOOR: bool = True      # Cloudflare/rate-limited — best-effort without proxies
+    SCRAPE_INSTAHYRE: bool = True      # custom adapter (internal JSON API)
+    SCRAPE_CUTSHORT: bool = True       # custom adapter (__NEXT_DATA__ / JSON-LD)
+    SCRAPE_WELLFOUND: bool = True      # custom adapter (stealth browser) — best-effort
+    SCRAPE_HIRECT: bool = False        # mobile-API spike — off until an endpoint is confirmed
+
+    # Comma-separated proxies for Tier-3 (e.g. "http://user:pass@host:port,..").
+    # Empty = direct connection. The protected boards (LinkedIn/Glassdoor/
+    # Wellfound) are unreliable without residential proxies — plug them here
+    # with no code change when budget allows.
+    SCRAPE_PROXIES: str = ""
+    # Circuit breaker: after N consecutive failures a source self-disables for
+    # COOLDOWN seconds so a blocked board stops wasting the run, then retries.
+    SCRAPE_CIRCUIT_THRESHOLD: int = 3
+    SCRAPE_CIRCUIT_COOLDOWN: int = 1800
+    # Stealth browser (Camoufox/Playwright) for JS + anti-bot boards (Wellfound,
+    # Glassdoor/LinkedIn fallback). Off → those sources skip their browser path.
+    STEALTH_ENABLED: bool = True
+
+    # Hirect mobile API (reverse-engineered). HIRECT_TOKEN is a captured/refreshed
+    # bearer token; HIRECT_API_BASE is the discovered endpoint host. Both blank
+    # until the spike confirms them — adapter returns [] when unset.
+    HIRECT_TOKEN: str = ""
+    HIRECT_API_BASE: str = ""
     # Fernet key for encrypting stored OAuth tokens at rest. If unset, a stable
     # key is derived from SECRET_KEY (see core/encryption.py).
     ENCRYPTION_KEY: str = ""
