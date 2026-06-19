@@ -26,33 +26,65 @@ html {
   text-rendering: optimizeLegibility;
 }
 
-/* shadcn neutral (zinc) theme tokens — light + dark */
+/* Brand theme tokens — violet -> cyan identity on a true white / black base.
+   Light = near-white canvas + white cards; Dark = near-black canvas + raised cards.
+   --primary is the brand violet so every .btn-primary, active nav item and focus
+   ring adopts the brand from one place. Semantic accents (success/warning/danger/
+   info) are tokenised so chips and the score ring stay theme-aware. */
 :root {
-  --background: 240 5% 96%;
+  /* Canvas is cooler (hue 0->240) and a touch deeper (98%->96.5%) so pure-white
+     (--card 0 0% 100%) surfaces lift via a real hue + luminance delta, not a dead
+     ~2% grey step. This is what fixes the "too light / flat" look. */
+  --background: 240 30% 96.5%;
   --foreground: 240 10% 3.9%;
   --card: 0 0% 100%;
   --card-foreground: 240 10% 3.9%;
-  --muted: 240 4.8% 95.9%;
+  --muted: 240 13% 94%;
   --muted-foreground: 240 3.8% 46.1%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --primary: 240 5.9% 10%;
-  --primary-foreground: 0 0% 98%;
-  --ring: 240 5% 50%;
+  --border: 240 13% 88%;
+  --input: 240 13% 88%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 262 83% 58%;
   --radius: 0.5rem;
+
+  /* Brand */
+  --brand: 262 83% 58%;     /* violet  #7C3AED */
+  --brand-2: 189 94% 43%;   /* cyan    #06B6D4 */
+  /* Semantic */
+  --success: 160 84% 39%;   /* green   #10B981 */
+  --warning: 38 92% 50%;    /* orange  #F59E0B */
+  --danger: 350 89% 60%;    /* red     #F43F5E */
+  --info: 189 94% 43%;      /* cyan    #06B6D4 */
+  /* Sidebar = navigation "chrome": a faint brand-tinted surface, distinct from
+     both the cool canvas and the white content cards, so the three read as one
+     family with clear hierarchy (canvas < sidebar < cards). */
+  --sidebar: 252 48% 98.5%;
+  --sidebar-border: 250 30% 91%;
 }
 .dark {
-  --background: 240 10% 3.9%;
+  /* Near-black nudged toward violet so the aurora reads as emitted light, and
+     card/edge separation lifted slightly so cards clear the corner glow. */
+  --background: 240 14% 4.5%;
   --foreground: 0 0% 98%;
-  --card: 240 6% 10%;
+  --card: 240 10% 9%;
   --card-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
+  --muted: 240 6% 14%;
   --muted-foreground: 240 5% 64.9%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 18%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 240 5.9% 10%;
-  --ring: 240 4.9% 50%;
+  --border: 240 8% 17%;
+  --input: 240 5% 18%;
+  --primary: 262 90% 66%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 262 90% 66%;
+
+  --brand: 262 90% 66%;
+  --brand-2: 187 92% 53%;
+  --success: 160 70% 45%;
+  --warning: 38 95% 58%;
+  --danger: 350 90% 66%;
+  --info: 187 92% 53%;
+  --sidebar: 252 22% 10%;
+  --sidebar-border: 250 14% 18%;
 }
 
 body {
@@ -65,8 +97,12 @@ body {
 }
 
 h1, h2, h3, h4 {
+  font-family: "Plus Jakarta Sans", Inter, -apple-system, system-ui, sans-serif;
   letter-spacing: -0.025em;
 }
+
+/* Tabular figures for any numeric UI (scores, salary, ATS, counts). */
+.tnum { font-variant-numeric: tabular-nums; }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Custom scrollbar
@@ -175,8 +211,53 @@ h1, h2, h3, h4 {
     transition: opacity 150ms ease;
     cursor: pointer;
   }
-  .btn-primary:hover:not(:disabled) { opacity: 0.9; }
+  .btn-primary:hover:not(:disabled) { opacity: 0.92; }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Marquee CTA — the one place the full violet->cyan brand gradient appears.
+     Reserve for hero / primary "apply" moments; everything else stays quiet. */
+  .btn-gradient {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: calc(var(--radius) - 2px);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-2)));
+    border: 1px solid transparent;
+    box-shadow: 0 2px 10px -2px hsl(var(--brand) / 0.5);
+    transition: filter 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+    cursor: pointer;
+  }
+  .btn-gradient:hover:not(:disabled) {
+    filter: brightness(1.06);
+    box-shadow: 0 6px 18px -4px hsl(var(--brand) / 0.55);
+  }
+  .btn-gradient:active:not(:disabled) { transform: translateY(1px); }
+  .btn-gradient:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Green affirmative action (Apply / confirm). */
+  .btn-success {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: calc(var(--radius) - 2px);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #fff;
+    background: hsl(var(--success));
+    border: 1px solid transparent;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    transition: filter 150ms ease;
+    cursor: pointer;
+  }
+  .btn-success:hover:not(:disabled) { filter: brightness(1.05); }
+  .btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .btn-secondary {
     display: inline-flex;
@@ -227,9 +308,31 @@ h1, h2, h3, h4 {
     letter-spacing: 0.01em;
   }
 
-  /* No more rainbow — headline text reads as the neutral foreground. */
+  /* Token-driven chips — same look in light + dark via alpha on HSL tokens.
+     Existing literal chip classes (bg-emerald-100 …) keep working alongside. */
+  .pill-brand   { background: hsl(var(--brand) / 0.12);   color: hsl(var(--brand));   border: 1px solid hsl(var(--brand) / 0.22); }
+  .pill-success { background: hsl(var(--success) / 0.13); color: hsl(var(--success)); border: 1px solid hsl(var(--success) / 0.24); }
+  .pill-warning { background: hsl(var(--warning) / 0.15); color: hsl(var(--warning)); border: 1px solid hsl(var(--warning) / 0.26); }
+  .pill-danger  { background: hsl(var(--danger) / 0.12);  color: hsl(var(--danger));  border: 1px solid hsl(var(--danger) / 0.22); }
+  .pill-info    { background: hsl(var(--info) / 0.12);    color: hsl(var(--info));    border: 1px solid hsl(var(--info) / 0.22); }
+
+  /* Card hover — a quiet lift, matching jobright/tsenta card interactions. */
+  .hover-lift { transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms ease; }
+  .hover-lift:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -12px rgba(15, 23, 42, 0.20); }
+
+  /* Neutral headline (kept so existing pages don't change unexpectedly). */
   .text-gradient { color: hsl(var(--foreground)); }
+  /* Opt-in brand gradient text — reserved for the wordmark / hero accents. */
+  .text-brand-gradient {
+    background: linear-gradient(120deg, hsl(var(--brand)), hsl(var(--brand-2)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
 }
+
+.dark .hover-lift:hover { box-shadow: 0 14px 32px -12px rgba(0, 0, 0, 0.55); }
 
 /* Dark mode is handled entirely by the CSS variables above — the flat .glass*,
    .input-glass and .btn-* classes read hsl(var(--card)) / --border / --primary,
@@ -303,3 +406,190 @@ h1, h2, h3, h4 {
 
 /* Misc component backgrounds used across pages */
 .dark .hover\:bg-accent-50\/40:hover { background-color: rgba(255, 255, 255, 0.05); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Dark mode — soft colour chips (bg-*-100/80 · text-*-700 · border-*-200/60)
+   These Tailwind tints are light-only, so the source / status / work-arrangement
+   pills (DiscoveredJobs, PublicJobs, JobMatchCard, Tracker…) washed out on the
+   dark canvas. Bright text on a low-alpha tint of the same hue restores legible
+   contrast in dark mode without changing light mode.
+   ───────────────────────────────────────────────────────────────────────── */
+.dark .bg-sky-100\/80     { background-color: rgba(14, 165, 233, 0.16); }
+.dark .bg-violet-100\/80  { background-color: rgba(139, 92, 246, 0.16); }
+.dark .bg-amber-100\/80   { background-color: rgba(245, 158, 11, 0.16); }
+.dark .bg-rose-100\/80    { background-color: rgba(244, 63, 94, 0.16); }
+.dark .bg-rose-50\/80     { background-color: rgba(244, 63, 94, 0.12); }
+.dark .bg-indigo-100\/80  { background-color: rgba(99, 102, 241, 0.16); }
+.dark .bg-lime-100\/80    { background-color: rgba(132, 204, 22, 0.16); }
+.dark .bg-orange-100\/80  { background-color: rgba(249, 115, 22, 0.16); }
+.dark .bg-blue-100\/80    { background-color: rgba(59, 130, 246, 0.16); }
+.dark .bg-teal-100\/80    { background-color: rgba(20, 184, 166, 0.16); }
+.dark .bg-emerald-100\/80 { background-color: rgba(16, 185, 129, 0.16); }
+.dark .bg-slate-100\/80   { background-color: rgba(100, 116, 139, 0.22); }
+.dark .bg-accent-100\/80  { background-color: rgba(255, 255, 255, 0.08); }
+
+.dark .text-sky-700,    .dark .text-sky-600    { color: #7dd3fc; }
+.dark .text-violet-700, .dark .text-violet-600 { color: #c4b5fd; }
+.dark .text-amber-700,  .dark .text-amber-600  { color: #fcd34d; }
+.dark .text-rose-700                            { color: #fda4af; }
+.dark .text-indigo-700                          { color: #a5b4fc; }
+.dark .text-lime-700                            { color: #bef264; }
+.dark .text-orange-700                          { color: #fdba74; }
+.dark .text-blue-700                            { color: #93c5fd; }
+.dark .text-teal-700                            { color: #5eead4; }
+.dark .text-accent-700                          { color: #e4e4e7; }
+
+.dark .border-sky-200\/60     { border-color: rgba(14, 165, 233, 0.30); }
+.dark .border-violet-200\/60  { border-color: rgba(139, 92, 246, 0.30); }
+.dark .border-amber-200\/60   { border-color: rgba(245, 158, 11, 0.30); }
+.dark .border-rose-200\/60    { border-color: rgba(244, 63, 94, 0.30); }
+.dark .border-indigo-200\/60  { border-color: rgba(99, 102, 241, 0.30); }
+.dark .border-lime-200\/60    { border-color: rgba(132, 204, 22, 0.30); }
+.dark .border-orange-200\/60  { border-color: rgba(249, 115, 22, 0.30); }
+.dark .border-blue-200\/60    { border-color: rgba(59, 130, 246, 0.30); }
+.dark .border-teal-200\/60    { border-color: rgba(20, 184, 166, 0.30); }
+.dark .border-emerald-200\/60 { border-color: rgba(16, 185, 129, 0.30); }
+.dark .border-slate-200\/60   { border-color: rgba(148, 163, 184, 0.26); }
+
+/* =============================================================================
+   AMBIENT AURORA — global always-on background (two fixed sibling layers)
+   .aurora-bg  = a cool base wash + two slow-drifting brand glows in the gutters
+   .aurora-grid = a static engineered dot-grid + SVG grain (texture + dithers the
+   glow banding). Both are pointer-events:none and sit BEHIND content (z-0); the
+   page content wrapper is raised with relative z-10. Opaque .glass cards occlude
+   the layers, so text never renders on a gradient. GPU-only motion (transform/
+   opacity); fully static under prefers-reduced-motion.
+   ============================================================================= */
+.aurora-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: layout paint style;
+  background-image:
+    radial-gradient(60% 55% at 78% 18%, hsl(var(--brand-2) / 0.09) 0%, transparent 60%),
+    radial-gradient(55% 50% at 18% 82%, hsl(var(--brand) / 0.09) 0%, transparent 60%),
+    radial-gradient(120% 90% at 50% 0%, hsl(240 40% 99% / 0.55) 0%, transparent 60%);
+}
+.dark .aurora-bg {
+  background-image:
+    radial-gradient(60% 55% at 78% 18%, hsl(var(--brand-2) / 0.10) 0%, transparent 60%),
+    radial-gradient(55% 50% at 18% 82%, hsl(var(--brand) / 0.10) 0%, transparent 60%),
+    radial-gradient(130% 100% at 50% -10%, hsl(262 60% 12% / 0.55) 0%, transparent 65%);
+}
+
+.aurora-bg::before,
+.aurora-bg::after {
+  content: "";
+  position: absolute;
+  width: 75vmax;
+  height: 75vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.aurora-bg::before {
+  top: -28vmax; left: -22vmax;
+  opacity: 0.55;
+  background: radial-gradient(circle at center,
+    hsl(var(--brand) / 0.28) 0%, hsl(var(--brand) / 0.13) 35%, transparent 70%);
+  animation: aurora-drift-a 34s ease-in-out infinite alternate;
+}
+.aurora-bg::after {
+  bottom: -30vmax; right: -24vmax;
+  opacity: 0.55;
+  background: radial-gradient(circle at center,
+    hsl(var(--brand-2) / 0.26) 0%, hsl(var(--brand-2) / 0.12) 35%, transparent 70%);
+  animation: aurora-drift-b 42s ease-in-out infinite alternate;
+}
+.dark .aurora-bg::before {
+  opacity: 0.55; filter: blur(100px);
+  background: radial-gradient(circle at center,
+    hsl(var(--brand) / 0.30) 0%, hsl(var(--brand) / 0.14) 35%, transparent 70%);
+}
+.dark .aurora-bg::after {
+  opacity: 0.50; filter: blur(100px);
+  background: radial-gradient(circle at center,
+    hsl(var(--brand-2) / 0.26) 0%, hsl(var(--brand-2) / 0.12) 35%, transparent 70%);
+}
+
+.aurora-grid {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(hsl(240 10% 30% / 0.05) 1px, transparent 1.4px),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>");
+  background-size: 22px 22px, 160px 160px;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  -webkit-mask-image: radial-gradient(140% 120% at 50% 30%, #000 55%, transparent 100%);
+          mask-image: radial-gradient(140% 120% at 50% 30%, #000 55%, transparent 100%);
+}
+.dark .aurora-grid {
+  background-image:
+    radial-gradient(hsl(0 0% 100% / 0.045) 1px, transparent 1.4px),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>");
+  background-size: 22px 22px, 160px 160px;
+  opacity: 0.6;
+  mix-blend-mode: screen;
+}
+
+@keyframes aurora-drift-a {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(5vmax, 4vmax, 0) scale(1.08); }
+}
+@keyframes aurora-drift-b {
+  0%   { transform: translate3d(0, 0, 0) scale(1.05); }
+  100% { transform: translate3d(-4vmax, -5vmax, 0) scale(1); }
+}
+
+/* White-card lift — a faint cool-tinted shadow makes cards read as raised planes
+   on the deeper canvas. Unlayered so it wins over the in-@layer .glass shadow. */
+.glass {
+  box-shadow:
+    0 1px 2px hsl(240 12% 20% / 0.05),
+    0 4px 12px -4px hsl(240 12% 20% / 0.07);
+}
+.dark .glass {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 6px 16px -6px rgba(0, 0, 0, 0.5);
+}
+
+/* Sidebar "chrome" surface — the brand-tinted nav rail. A faint top-down violet
+   wash over the --sidebar base gives it life and ties it to the brand; a cool
+   brand-tinted shadow seats it as a raised panel in the same family as the cards. */
+.sidebar-panel {
+  background:
+    linear-gradient(180deg, hsl(var(--brand) / 0.06) 0%, transparent 44%),
+    hsl(var(--sidebar));
+  border: 1px solid hsl(var(--sidebar-border));
+  box-shadow:
+    0 1px 2px hsl(240 12% 20% / 0.04),
+    0 10px 30px -14px hsl(252 50% 32% / 0.18);
+}
+.dark .sidebar-panel {
+  background:
+    linear-gradient(180deg, hsl(var(--brand) / 0.12) 0%, transparent 44%),
+    hsl(var(--sidebar));
+  border: 1px solid hsl(var(--sidebar-border));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 12px 32px -14px rgba(0, 0, 0, 0.65);
+}
+
+/* Accessibility: stop motion when asked; glows + grid remain as static decor. */
+@media (prefers-reduced-motion: reduce) {
+  .aurora-bg::before,
+  .aurora-bg::after { animation: none; will-change: auto; }
+}
+
+/* Low-power mobile: smaller blur keeps GPUs smooth. */
+@media (max-width: 640px) {
+  .aurora-bg::before,
+  .aurora-bg::after { filter: blur(64px); width: 90vmax; height: 90vmax; }
+}

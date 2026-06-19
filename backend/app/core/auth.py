@@ -58,3 +58,14 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+async def get_current_admin(current_user=Depends(get_current_user)):
+    """Gate admin-only endpoints. Reuses get_current_user, then requires the
+    is_admin flag — returns 403 for ordinary signed-in users."""
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user

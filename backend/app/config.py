@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     SCRAPE_CUTSHORT: bool = True       # custom adapter (__NEXT_DATA__ / JSON-LD)
     SCRAPE_WELLFOUND: bool = True      # custom adapter (stealth browser) — best-effort
     SCRAPE_HIRECT: bool = False        # mobile-API spike — off until an endpoint is confirmed
+    SCRAPE_HIRIST: bool = False        # hirist.tech (Next.js SSR) — opt-in; robots allows listing pages (Crawl-delay 10)
+    HIRIST_API_BASE: str = ""          # reserved if a hirist JSON API is later confirmed
 
     # Comma-separated proxies for Tier-3 (e.g. "http://user:pass@host:port,..").
     # Empty = direct connection. The protected boards (LinkedIn/Glassdoor/

@@ -31,6 +31,17 @@ class SavedApplication(Base):
     role: Mapped[str] = mapped_column(String(200), nullable=False)
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     mail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Tracker-board columns (parity with the user's spreadsheet): the job link
+    # itself, which portal/source, location, salary, job type, work arrangement,
+    # which resume was used, and a free-text contact (recruiter/HM).
+    job_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_portal: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    salary: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    job_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    work_arrangement: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    resume_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contact: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Gmail thread this card was auto-created from (null for hand-added cards).
     # The per-(user, thread) idempotency key the auto-tracker dedupes on.
     source_thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)

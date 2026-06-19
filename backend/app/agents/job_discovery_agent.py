@@ -83,6 +83,22 @@ def _is_india_location(location: str | None) -> bool:
     return True
 
 
+def _is_india_strict(location: str | None) -> bool:
+    """Strict India gate for the feed: keep only an explicit India location OR a
+    remote/worldwide role (remote is fine even for another country). Foreign-
+    onsite AND empty/unknown locations are DROPPED — high preference to India.
+    Use this for the user-facing feed/pool; _is_india_location stays lenient for
+    slug discovery where empty often means an India employer omitted the field."""
+    if not location or not location.strip():
+        return False
+    low = f" {location.strip().lower()} "
+    if any(tok in low for tok in _INDIA_TOKENS):
+        return True
+    if any(tok in low for tok in _GLOBAL_REMOTE):
+        return True
+    return False
+
+
 def _normalize_india_location(location: str | None) -> str | None:
     if not location:
         return location
@@ -303,6 +319,14 @@ def _strip_html(html: str) -> str:
     return re.sub(r"<[^>]+>", " ", html or "").strip()
 
 
+def _content_key(company: str | None, title: str | None) -> tuple[str, str] | None:
+    """Dedup key for the same role posted to multiple sources: (company, title)
+    both normalized. None when either is missing (can't safely dedup)."""
+    c = re.sub(r"[^a-z0-9]", "", (company or "").lower())
+    t = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]", " ", (title or "").lower())).strip()
+    return (c, t) if c and t else None
+
+
 # ── Role matching (synonym-aware) ─────────────────────────────────────────────
 
 _ROLE_EXPANSIONS: list[tuple[re.Pattern, list[str]]] = []
@@ -397,6 +421,58 @@ def _load_india_slugs() -> dict:
         return json.load(f)
 
 
+_ATS_KEYS = (
+    "greenhouse", "lever", "ashby", "smartrecruiters", "workable",
+    "recruitee", "breezy", "personio", "workday", "zoho",
+)
+
+
+async def load_india_slugs_from_db(session) -> dict | None:
+    """Build the fetch_all_ats slug dict from `active` company_source rows.
+
+    Returns None (so callers fall back to the seed JSON) when the table is
+    empty/missing or the query errors — supply must never drop to zero.
+    workday/zoho rows contribute their config_json dict; the rest their slug.
+    """
+    from sqlalchemy import select
+    from app.models.company_source import CompanySource
+
+    try:
+        rows = (await session.execute(
+            select(CompanySource.ats, CompanySource.slug, CompanySource.config_json)
+            .where(CompanySource.status == "active")
+        )).all()
+    except Exception as exc:  # noqa: BLE001 — table not migrated yet, etc.
+        logger.warning("load_india_slugs_from_db failed, using file seed: %s", repr(exc)[:160])
+        return None
+
+    if not rows:
+        return None
+
+    out: dict = {k: [] for k in _ATS_KEYS}
+    for ats, slug, config in rows:
+        out.setdefault(ats, [])
+        if ats in ("workday", "zoho"):
+            if config:
+                out[ats].append(config)
+        else:
+            out[ats].append(slug)
+    total = sum(len(v) for v in out.values())
+    logger.info("Loaded %d active India slugs from registry", total)
+    return out
+
+
+async def get_india_slugs(session=None) -> dict:
+    """Active slugs from the DB registry, falling back to the seed JSON file."""
+    if session is not None:
+        db = await load_india_slugs_from_db(session)
+        return db if db else _load_india_slugs()
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as s:
+        db = await load_india_slugs_from_db(s)
+    return db if db else _load_india_slugs()
+
+
 # ── Quick India ATS search (used by /api/public/job-search) ───────────────────
 
 _QUICK_CONCURRENCY = 20
@@ -410,7 +486,7 @@ async def quick_ats_search(role: str, posted_within_days: int | None = 14) -> li
     """
     from app.agents import ats_sources
 
-    slugs = _load_india_slugs()
+    slugs = await get_india_slugs()
     profile = {"target_roles": role}
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -440,9 +516,10 @@ class JobDiscoveryAgent:
         from app.agents.india_board_sources import fetch_all_india_boards
         from app.agents.wellfound_source import fetch_all_wellfound
         from app.agents.hirect_source import fetch_all_hirect
+        from app.agents.hirist_source import fetch_all_hirist_tech
         from app.services.jobs_aggregators import fetch_all_aggregators
 
-        slugs = _load_india_slugs()
+        slugs = await get_india_slugs()
         locations = [l.strip() for l in (profile.get("locations") or "").split(",") if l.strip()]
         posted_within = profile.get("posted_within_days")
         wanted_arrangements = {
@@ -465,6 +542,7 @@ class JobDiscoveryAgent:
                 fetch_all_india_boards(client, queries, locations),
                 fetch_all_wellfound(queries, locations),
                 fetch_all_hirect(client, queries, locations),
+                fetch_all_hirist_tech(client, queries, locations),
                 return_exceptions=True,
             )
 
@@ -503,7 +581,7 @@ class JobDiscoveryAgent:
         out: list[dict] = []
         for j in deduped:
             location = j.get("location")
-            if not _is_india_location(location):
+            if not _is_india_strict(location):
                 continue
             title = j.get("title") or ""
             company = j.get("company") or ""
@@ -529,10 +607,22 @@ class JobDiscoveryAgent:
                 j["notice_period"] = _parse_notice_period(description)
             out.append(j)
 
+        # ── Content-level dedupe: same company+title from different sources ──
+        content_seen: set[tuple[str, str]] = set()
+        final: list[dict] = []
+        for j in out:
+            ck = _content_key(j.get("company"), j.get("title"))
+            if ck and ck in content_seen:
+                continue
+            if ck:
+                content_seen.add(ck)
+            final.append(j)
+
         logger.info(
-            "Discovery postprocess: %d raw → %d deduped → %d India/clean", len(raw), before, len(out)
+            "Discovery postprocess: %d raw → %d url-deduped → %d clean → %d content-deduped",
+            len(raw), before, len(out), len(final),
         )
-        return out
+        return final
 
 
 # ── Entrypoint (contract #4) ──────────────────────────────────────────────────
@@ -590,4 +680,177 @@ async def discover_for_profile(profile_id: int, user_id: int) -> list[dict]:
     agent = JobDiscoveryAgent()
     jobs = await agent.discover(profile, queries)
     logger.info("discover_for_profile(%s, %s): %d jobs", profile_id, user_id, len(jobs))
+    await log_discovery_run(
+        "profile_discovery", user_id=user_id, profile_id=profile_id,
+        queries=queries, locations=profile.get("locations"), jobs_found=len(jobs),
+    )
     return jobs
+
+
+# ── Generalized pool warming (role-agnostic) ──────────────────────────────────
+
+def _trunc(value: str | None, n: int) -> str | None:
+    return value[:n] if isinstance(value, str) else value
+
+
+async def warm_job_pool(posted_within_days: int | None = 7) -> dict:
+    """Fetch EVERY role from every active ATS slug into the shared JobPool.
+
+    Generalized discovery: passing profile=None to fetch_all_ats skips the
+    per-role title filter, so the pool fills with the full breadth of India
+    roles (not just one user's target role). Per-user feeds then match/score
+    from this pool. Runs on a schedule so freshness stays high. Returns stats.
+    """
+    from sqlalchemy import func
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.agents.ats_sources import fetch_all_ats
+    from app.core.database import AsyncSessionLocal
+    from app.models.job_pool import JobPool
+
+    slugs = await get_india_slugs()
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        raw = await fetch_all_ats(client, slugs, None, posted_within_days)
+
+    agent = JobDiscoveryAgent()
+    jobs = agent._postprocess(raw, excluded=set(), wanted_arrangements=set(), posted_within=posted_within_days)
+
+    now = datetime.now(timezone.utc)
+    # Dedup by exact job_url (keep last) + truncate to column limits → row dicts.
+    by_url: dict[str, dict] = {}
+    for j in jobs:
+        url = j.get("job_url")
+        if not url or len(url) > 2048:
+            continue
+        by_url[url] = {
+            "job_url": url,
+            "title": _trunc(j.get("title"), 255),
+            "company": _trunc(j.get("company"), 255),
+            "location": _trunc(j.get("location"), 255),
+            "job_description": j.get("job_description"),
+            "source": _trunc(j.get("source") or "pool", 50),
+            "work_arrangement": _trunc(j.get("work_arrangement"), 20),
+            "posted_at": j.get("posted_at"),
+            "salary_lpa": j.get("salary_lpa"),
+            "salary_raw": _trunc(j.get("salary_raw"), 120),
+            "notice_period": _trunc(j.get("notice_period"), 20),
+            "search_query": "__pool_warm__",
+            "first_seen_at": now,
+            "last_seen_at": now,
+        }
+    rows = list(by_url.values())
+
+    # Atomic, dup-safe upsert in chunks; a bad chunk is skipped, never fatal.
+    saved = 0
+    async with AsyncSessionLocal() as db:
+        for i in range(0, len(rows), 500):
+            chunk = rows[i:i + 500]
+            stmt = pg_insert(JobPool).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["job_url"],
+                set_={
+                    "title": func.coalesce(stmt.excluded.title, JobPool.title),
+                    "company": func.coalesce(stmt.excluded.company, JobPool.company),
+                    "location": func.coalesce(stmt.excluded.location, JobPool.location),
+                    "job_description": func.coalesce(stmt.excluded.job_description, JobPool.job_description),
+                    "source": stmt.excluded.source,
+                    "work_arrangement": func.coalesce(stmt.excluded.work_arrangement, JobPool.work_arrangement),
+                    "posted_at": func.coalesce(stmt.excluded.posted_at, JobPool.posted_at),
+                    "salary_lpa": func.coalesce(stmt.excluded.salary_lpa, JobPool.salary_lpa),
+                    "salary_raw": func.coalesce(stmt.excluded.salary_raw, JobPool.salary_raw),
+                    "notice_period": func.coalesce(stmt.excluded.notice_period, JobPool.notice_period),
+                    "last_seen_at": stmt.excluded.last_seen_at,
+                },
+            )
+            try:
+                await db.execute(stmt)
+                await db.commit()
+                saved += len(chunk)
+            except Exception as exc:  # noqa: BLE001 — one bad chunk never aborts the run
+                await db.rollback()
+                logger.warning("pool chunk %d skipped: %s", i // 500, repr(exc)[:160])
+
+    stats = {"fetched": len(raw), "kept": len(jobs), "pooled": saved}
+    logger.info("warm_job_pool: %s", stats)
+    await log_discovery_run("pool_warm", jobs_found=saved, stats=stats)
+    return stats
+
+
+async def seed_user_feed_from_pool(
+    user_id: int, profile: dict, *, search_profile_id: int | None = None, limit: int = 150
+) -> int:
+    """Fast feed seed: pull matching jobs from the shared JobPool into the user's
+    DiscoveredJob feed so results appear instantly — no live 895-slug crawl. Role
+    titles are synonym-expanded; missing-location pool rows are included."""
+    from sqlalchemy import select, or_, func
+    from app.core.database import AsyncSessionLocal
+    from app.models.job_pool import JobPool
+    from app.models.discovered_job import DiscoveredJob
+
+    roles = [r.strip() for r in (profile.get("target_roles") or "").split(",") if r.strip()]
+    locations = [l.strip() for l in (profile.get("locations") or "").split(",") if l.strip()]
+
+    async with AsyncSessionLocal() as db:
+        q = select(JobPool)
+        if roles:
+            terms: list[str] = []
+            for r in roles:
+                terms.extend(_expand_term(r))
+            q = q.where(or_(*[func.lower(JobPool.title).contains(t.lower()) for t in terms]))
+        if locations:
+            loc_conds = [func.lower(JobPool.location).contains(l.lower()) for l in locations]
+            loc_conds.append(JobPool.location.is_(None))
+            q = q.where(or_(*loc_conds))
+        pool_jobs = (await db.execute(
+            q.order_by(JobPool.last_seen_at.desc()).limit(limit)
+        )).scalars().all()
+        if not pool_jobs:
+            return 0
+
+        urls = [p.job_url for p in pool_jobs]
+        existing: set[str] = set()
+        for i in range(0, len(urls), 500):
+            rows = await db.execute(
+                select(DiscoveredJob.job_url).where(
+                    DiscoveredJob.user_id == user_id,
+                    DiscoveredJob.job_url.in_(urls[i:i + 500]),
+                )
+            )
+            existing.update(r[0] for r in rows.all())
+
+        inserted = 0
+        for p in pool_jobs:
+            if p.job_url in existing:
+                continue
+            db.add(DiscoveredJob(
+                user_id=user_id, search_profile_id=search_profile_id, job_url=p.job_url,
+                title=p.title, company=p.company, location=p.location,
+                job_description=p.job_description, source=p.source or "pool",
+                work_arrangement=p.work_arrangement, posted_at=p.posted_at,
+                salary_lpa=p.salary_lpa, salary_raw=p.salary_raw, notice_period=p.notice_period,
+                status="discovered",
+            ))
+            inserted += 1
+        await db.commit()
+    logger.info("seed_user_feed_from_pool(%s): +%d from pool", user_id, inserted)
+    return inserted
+
+
+async def log_discovery_run(
+    run_type: str, *, user_id: int | None = None, profile_id: int | None = None,
+    queries: list[str] | None = None, locations: str | None = None,
+    jobs_found: int = 0, stats: dict | None = None,
+) -> None:
+    """Append one row to the job-search history. Never raises (best-effort)."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.discovery_run import DiscoveryRun
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add(DiscoveryRun(
+                run_type=run_type, user_id=user_id, profile_id=profile_id,
+                queries=json.dumps(queries) if queries else None,
+                locations=locations[:255] if locations else None,
+                jobs_found=jobs_found, stats=stats,
+            ))
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("log_discovery_run(%s) failed: %s", run_type, repr(exc)[:160])

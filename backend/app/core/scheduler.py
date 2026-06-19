@@ -53,17 +53,41 @@ async def _run_daily_digest() -> None:
         logger.error("daily digest error: %s", repr(e)[:200])
 
 
+async def _run_pool_warm() -> None:
+    """Generalized, role-agnostic refresh of the shared JobPool (freshness engine)."""
+    try:
+        from app.agents.job_discovery_agent import warm_job_pool
+        await warm_job_pool(posted_within_days=7)
+    except Exception as e:  # noqa: BLE001
+        logger.error("pool warm error: %s", repr(e)[:200])
+
+
+async def _run_slug_revalidation() -> None:
+    """Re-probe registry slugs; refresh india_roles_count, prune dead with hysteresis."""
+    try:
+        from app.scripts.slug_discovery import revalidate_registry
+        await revalidate_registry()
+    except ImportError:
+        logger.info("slug revalidation skipped (not built yet)")
+    except Exception as e:  # noqa: BLE001
+        logger.error("slug revalidation error: %s", repr(e)[:200])
+
+
 def start_scheduler() -> None:
     if not settings.ENABLE_SCHEDULER:
         logger.info("scheduler disabled (ENABLE_SCHEDULER=false)")
         return
     if scheduler.running:
         return
-    # Discovery every 6h; digest ~07:30 IST.
-    scheduler.add_job(_run_scheduled_discovery, CronTrigger(hour="*/6", minute=0), id="discovery", replace_existing=True)
+    # Freshness-biased cadence (IST): general pool warm + per-profile discovery
+    # every 3h so 24h/7d jobs surface fast; registry revalidation off-peak at 03:00;
+    # digest 07:30.
+    scheduler.add_job(_run_pool_warm, CronTrigger(hour="*/3", minute=10), id="pool_warm", replace_existing=True)
+    scheduler.add_job(_run_scheduled_discovery, CronTrigger(hour="*/3", minute=30), id="discovery", replace_existing=True)
+    scheduler.add_job(_run_slug_revalidation, CronTrigger(hour=3, minute=0), id="slug_revalidate", replace_existing=True)
     scheduler.add_job(_run_daily_digest, CronTrigger(hour=7, minute=30), id="digest", replace_existing=True)
     scheduler.start()
-    logger.info("APScheduler started (discovery */6h, digest 07:30 IST)")
+    logger.info("APScheduler started (pool warm + discovery */3h, revalidate 03:00, digest 07:30 IST)")
 
 
 def shutdown_scheduler() -> None:

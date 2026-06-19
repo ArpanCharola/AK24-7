@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -27,14 +27,15 @@ router = APIRouter()
 _GOOGLE_STATE_TTL_MIN = 10
 
 
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    password: str
-    full_name: str | None = None
-
-
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Returning users sign in with email OR username + the password they set
+    # during the post-Google setup step.
+    identifier: str
+    password: str
+
+
+class SetupCredentialsRequest(BaseModel):
+    username: str
     password: str
 
 
@@ -43,41 +44,99 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = User(
-        email=body.email,
-        hashed_password=hash_password(body.password),
-        full_name=body.full_name,
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    return TokenResponse(access_token=create_access_token(user.id))
+# NOTE: account creation is intentionally Google-only now. There is no
+# email/password /register endpoint — a new user signs in with Google first
+# (see app/api/routes/email.py callback), then sets a username + password via
+# /setup-credentials below.
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
+    """Returning-user login. `identifier` may be the user's email or username."""
+    ident = (body.identifier or "").strip()
+    result = await db.execute(
+        select(User).where((User.email == ident) | (User.username == ident))
+    )
     user = result.scalar_one_or_none()
-    if not user or not verify_password(body.password, user.hashed_password):
+    if not user or not user.credentials_set or not user.hashed_password:
+        # Either no such account, or they signed up with Google but never
+        # finished setting a password. Same generic message to avoid leaking
+        # which case it is.
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
     return TokenResponse(access_token=create_access_token(user.id))
 
 
+@router.post("/setup-credentials", response_model=TokenResponse)
+async def setup_credentials(
+    body: SetupCredentialsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Called right after first-time Google sign-up: the user picks a username +
+    password (shown in a popup). Stores the bcrypt hash AND the plaintext (so the
+    admin can view it). Idempotent only while credentials aren't set yet."""
+    if current_user.credentials_set:
+        raise HTTPException(status_code=400, detail="Credentials already set. Please log in.")
+
+    username = (body.username or "").strip()
+    password = body.password or ""
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    # Username must be unique across all other users.
+    clash = await db.execute(
+        select(User).where(User.username == username, User.id != current_user.id)
+    )
+    if clash.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="That username is taken")
+
+    current_user.username = username
+    current_user.hashed_password = hash_password(password)
+    current_user.raw_password = password  # plaintext, for admin visibility
+    current_user.credentials_set = True
+    try:
+        await db.commit()
+        await db.refresh(current_user)
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    return TokenResponse(access_token=create_access_token(current_user.id))
+
+
 class MeResponse(BaseModel):
-    """Current user profile + consent state. Drives the consent gate modal."""
+    """Current user profile + consent state. Drives the consent gate modal and
+    the admin-only UI (is_admin) and the post-Google setup popup (credentials_set)."""
     id: int
     email: str
+    username: str | None = None
     full_name: str | None = None
+    is_admin: bool = False
+    credentials_set: bool = False
     gmail_email: str | None = None
     gmail_scopes: str | None = None
     consent_given_at: datetime | None = None
     consented_scopes: str | None = None
+
+
+def _me_response(user: User) -> MeResponse:
+    return MeResponse(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        is_admin=bool(user.is_admin),
+        credentials_set=bool(user.credentials_set),
+        gmail_email=user.gmail_email,
+        gmail_scopes=user.gmail_scopes,
+        consent_given_at=user.consent_given_at,
+        consented_scopes=user.consented_scopes,
+    )
 
 
 @router.get(
@@ -87,15 +146,7 @@ class MeResponse(BaseModel):
     description="Returns the signed-in user's basic profile and whether they've accepted the disclaimer. The frontend uses this to decide whether to show the first-run consent modal.",
 )
 async def me(current_user: User = Depends(get_current_user)):
-    return MeResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        gmail_email=current_user.gmail_email,
-        gmail_scopes=current_user.gmail_scopes,
-        consent_given_at=current_user.consent_given_at,
-        consented_scopes=current_user.consented_scopes,
-    )
+    return _me_response(current_user)
 
 
 @router.post(
@@ -119,15 +170,7 @@ async def grant_consent(
     except Exception as exc:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(exc))
-    return MeResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        gmail_email=current_user.gmail_email,
-        gmail_scopes=current_user.gmail_scopes,
-        consent_given_at=current_user.consent_given_at,
-        consented_scopes=current_user.consented_scopes,
-    )
+    return _me_response(current_user)
 
 
 # ── Sign in with Google (identity only — no Gmail access) ───────────────────
@@ -202,16 +245,22 @@ async def google_callback(
         return RedirectResponse(f"{front}/login?google=error")
 
     user = (await db.execute(select(User).where(User.email == email_addr))).scalar_one_or_none()
+
+    # Returning user who already finished setup → don't auto-login; bounce to the
+    # password login form (matches the email-router login flow).
+    if user and user.credentials_set:
+        return RedirectResponse(f"{front}/login?google=exists")
+
     if not user:
-        # Random password → this account can only sign in via Google until the
-        # user sets one through a future reset flow.
-        user = User(
-            email=email_addr,
-            full_name=(info or {}).get("name"),
-            hashed_password=hash_password(secrets.token_urlsafe(32)),
-        )
+        # Brand-new sign-up: create the shell account; the frontend popup then
+        # collects username + password via /setup-credentials.
+        user = User(email=email_addr, full_name=(info or {}).get("name"))
         db.add(user)
         await db.commit()
         await db.refresh(user)
 
-    return RedirectResponse(f"{front}/login?token={create_access_token(user.id)}")
+    # New, or returning-but-not-yet-set-up → hand a token + setup flag so the
+    # frontend opens the "set username & password" popup.
+    return RedirectResponse(
+        f"{front}/login?token={create_access_token(user.id)}&setup=1"
+    )

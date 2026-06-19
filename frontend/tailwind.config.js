@@ -15,6 +15,14 @@ export default {
           "system-ui",
           "sans-serif",
         ],
+        display: [
+          "Plus Jakarta Sans",
+          "Inter",
+          "-apple-system",
+          "Segoe UI",
+          "system-ui",
+          "sans-serif",
+        ],
         mono: [
           "SF Mono",
           "JetBrains Mono",
@@ -40,6 +48,16 @@ export default {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
         },
+        // Brand identity (violet -> cyan) + semantic accents. All read CSS vars
+        // defined in index.css, so they adapt to light/dark automatically.
+        brand: {
+          DEFAULT: "hsl(var(--brand))",
+          accent: "hsl(var(--brand-2))",
+        },
+        success: "hsl(var(--success))",
+        warning: "hsl(var(--warning))",
+        danger: "hsl(var(--danger))",
+        info: "hsl(var(--info))",
         // "accent" was the purple brand; remapped to neutral zinc so every
         // existing accent-* usage reads as the shadcn neutral admin look.
         accent: {
@@ -63,6 +81,8 @@ export default {
         "glass-lg":   "0 1px 0 rgba(255,255,255,0.7) inset, 0 24px 60px -16px rgba(15,23,42,0.22), 0 8px 24px -6px rgba(15,23,42,0.10)",
         "glass-dark": "0 1px 0 rgba(255,255,255,0.06) inset, 0 8px 32px -8px rgba(0,0,0,0.4), 0 2px 8px -2px rgba(0,0,0,0.25)",
         "ring-accent":"0 0 0 4px rgba(126,83,255,0.18)",
+        "ring-brand": "0 0 0 4px hsl(var(--brand) / 0.18)",
+        lift:        "0 14px 30px -12px rgba(15,23,42,0.20)",
         "inner-soft": "inset 0 1px 2px rgba(15,23,42,0.06)",
       },
       keyframes: {

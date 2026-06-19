@@ -31,8 +31,20 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-  login: (data) => api.post("/auth/login", data),
-  register: (data) => api.post("/auth/register", data),
+  // Returning-user login. `identifier` is email OR username.
+  login: ({ identifier, password }) => api.post("/auth/login", { identifier, password }),
+  // First-time setup right after Google sign-up: pick username + password.
+  setupCredentials: ({ username, password }) =>
+    api.post("/auth/setup-credentials", { username, password }),
+  me: () => api.get("/auth/me"),
+};
+
+// Admin console — all endpoints require an is_admin token (backend 403s others).
+export const adminApi = {
+  listUsers: () => api.get("/admin/users"),
+  getUser: (id) => api.get(`/admin/users/${id}`),
+  deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  setActive: (id, isActive) => api.patch(`/admin/users/${id}`, { is_active: isActive }),
 };
 
 export const applicationsApi = {

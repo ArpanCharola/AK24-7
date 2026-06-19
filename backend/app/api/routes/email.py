@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.auth import ALGORITHM, create_access_token, get_current_user, hash_password
+from app.core.auth import ALGORITHM, create_access_token, get_current_user
 from app.core.database import get_db
 from app.core.encryption import encrypt
 from app.models.job_application import JobApplication
@@ -161,21 +161,28 @@ async def callback(
         return RedirectResponse(err_url)
 
     if is_login:
-        # Find-or-create the user by Google email, then issue an app JWT.
+        # New refined flow:
+        #  - brand-new email  → create a shell account, hand back a token + a
+        #    `setup=1` flag so the frontend popup collects username + password.
+        #  - returning + already set up → DON'T auto-login; bounce to the login
+        #    form with "account already exists" (per product requirement).
+        #  - returning but never finished setup → resume setup.
         user = (await db.execute(select(User).where(User.email == email_addr))).scalar_one_or_none()
+
+        if user and user.credentials_set:
+            return RedirectResponse(f"{front}/login?google=exists")
+
         if not user:
-            user = User(
-                email=email_addr,
-                full_name=(info or {}).get("name"),
-                hashed_password=hash_password(secrets.token_urlsafe(32)),  # no password login
-            )
+            user = User(email=email_addr, full_name=(info or {}).get("name"))
             db.add(user)
+        # Connect Gmail too (the consent already granted the scopes) so inbox
+        # tracking works without a separate step.
         user.gmail_email = email_addr
         _store_tokens(user, creds)
         await db.commit()
         await db.refresh(user)
         app_token = create_access_token(user.id)
-        return RedirectResponse(f"{front}/login?token={app_token}")
+        return RedirectResponse(f"{front}/login?token={app_token}&setup=1")
 
     # purpose == "connect"
     if user_id is None:

@@ -1,22 +1,18 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import AppLayout from "./components/Layout/AppLayout";
+import { authApi } from "./services/api";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Profile from "./pages/Profile";
-import JobPreferences from "./pages/JobPreferences";
+import Settings from "./pages/Settings";
 import DiscoveredJobs from "./pages/DiscoveredJobs";
 import TailoredResumes from "./pages/TailoredResumes";
 import EmailAuto from "./pages/EmailAuto";
-import Applications from "./pages/Applications";
 import Tracker from "./pages/Tracker";
-import EmailHome from "./pages/EmailHome";
 import Inbox from "./pages/Inbox";
-import Labels from "./pages/Labels";
-import TrackerList from "./pages/TrackerList";
 import PublicJobs from "./pages/PublicJobs";
-import Copilot from "./pages/Copilot";
-import ConsentGate from "./components/ConsentGate";
+import Admin from "./pages/Admin";
 
 const queryClient = new QueryClient();
 
@@ -28,30 +24,39 @@ function PrivateRoute({ children }) {
   );
 }
 
+// "/" is the job-seeker Dashboard for normal users; the admin is a management-only
+// account, sent straight to /admin so they never see the job-seeker UI.
+function HomeRoute() {
+  const { data: me, isLoading } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => authApi.me().then((r) => r.data),
+    enabled: !!localStorage.getItem("token"),
+    staleTime: 5 * 60 * 1000,
+  });
+  if (isLoading) return null;
+  if (me?.is_admin) return <Navigate to="/admin" replace />;
+  return <Dashboard />;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <ConsentGate>
         <Routes>
           <Route path="/login" element={<Login />} />
-          {/* Public — accessible without login. ConsentGate ignores tokenless users. */}
+          {/* Public — accessible without login. */}
           <Route path="/jobs" element={<PublicJobs />} />
-          <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/" element={<PrivateRoute><HomeRoute /></PrivateRoute>} />
           <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
-          <Route path="/job-preferences" element={<PrivateRoute><JobPreferences /></PrivateRoute>} />
+          <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/discovered-jobs" element={<PrivateRoute><DiscoveredJobs /></PrivateRoute>} />
           <Route path="/tailored-resumes" element={<PrivateRoute><TailoredResumes /></PrivateRoute>} />
-          <Route path="/copilot" element={<PrivateRoute><Copilot /></PrivateRoute>} />
+          <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
           <Route path="/email-auto" element={<PrivateRoute><EmailAuto /></PrivateRoute>} />
-          <Route path="/applications" element={<PrivateRoute><Applications /></PrivateRoute>} />
           <Route path="/tracker" element={<PrivateRoute><Tracker /></PrivateRoute>} />
-          <Route path="/email-home" element={<PrivateRoute><EmailHome /></PrivateRoute>} />
+          {/* Inbox kept routable (not in nav) until the unified Emails page lands. */}
           <Route path="/inbox" element={<PrivateRoute><Inbox /></PrivateRoute>} />
-          <Route path="/labels" element={<PrivateRoute><Labels /></PrivateRoute>} />
-          <Route path="/tracker-list" element={<PrivateRoute><TrackerList /></PrivateRoute>} />
         </Routes>
-        </ConsentGate>
       </BrowserRouter>
     </QueryClientProvider>
   );

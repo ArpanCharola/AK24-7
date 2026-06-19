@@ -53,6 +53,19 @@ async def _require_token(current_user: User, db: AsyncSession) -> str:
     return token
 
 
+def _empty_tracker() -> dict:
+    """Zeroed tracker payload — returned by the read-only view when Gmail isn't
+    usable, so the page shows '0 applications' instead of nagging to connect."""
+    from datetime import timedelta
+    ist_today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date().isoformat()
+    return {
+        "today": {"date": ist_today, "count": 0, "messages": []},
+        "previous_days": [],
+        "since_date": ist_today,
+        "total": 0,
+    }
+
+
 @router.get(
     "/tracker",
     summary="Count how many jobs you applied to",
@@ -70,7 +83,13 @@ async def application_tracker(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    token = await _require_token(current_user, db)
+    try:
+        token = await _require_token(current_user, db)
+    except HTTPException as exc:
+        # Read-only view: never nag to connect Gmail — just show zeros.
+        if exc.status_code in (409, 502):
+            return _empty_tracker()
+        raise
 
     use_cache = not fresh and not debug
     if use_cache:

@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.core.database import init_db
+from app.core.bootstrap import ensure_admin
 from app.core.scheduler import start_scheduler, shutdown_scheduler
 import app.models  # registers all models with SQLAlchemy before any query runs
-from app.api.routes import auth, applications, otp, profile, job_searches, discovered_jobs, tailored_resumes, email, mail_tracker, saved_applications, dashboard, public_jobs
+from app.api.routes import auth, applications, otp, profile, job_searches, discovered_jobs, tailored_resumes, email, mail_tracker, saved_applications, dashboard, public_jobs, admin, matches
 from app.api.websocket import ws_router
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized")
     except Exception as e:
         logger.warning(f"Database init failed (is Postgres running?): {e}")
+    try:
+        await ensure_admin()
+    except Exception as e:
+        logger.warning(f"Admin bootstrap skipped: {e}")
     start_scheduler()
     yield
     shutdown_scheduler()
@@ -52,11 +57,13 @@ app.include_router(otp.router, prefix="/api/otp", tags=["otp"])
 app.include_router(profile.router, prefix="/api", tags=["profile"])
 app.include_router(job_searches.router, prefix="/api", tags=["job-searches"])
 app.include_router(discovered_jobs.router, prefix="/api", tags=["discovered-jobs"])
+app.include_router(matches.router, prefix="/api/matches", tags=["matches"])
 app.include_router(tailored_resumes.router, prefix="/api", tags=["tailored-resumes"])
 app.include_router(email.router, prefix="/api/email", tags=["email"])
 app.include_router(mail_tracker.router, prefix="/api/mail-applications", tags=["mail-applications"])
 app.include_router(saved_applications.router, prefix="/api/saved-applications", tags=["saved-applications"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 # Public + pool: GET /api/public/{job-search,jobs} unauth, POST /api/public/import-to-profile/{id} authed
 app.include_router(public_jobs.router, prefix="/api/public", tags=["public-jobs"])
 app.include_router(ws_router, prefix="/ws", tags=["websocket"])

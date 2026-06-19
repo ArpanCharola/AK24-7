@@ -21,7 +21,20 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Username chosen in the post-Google "set credentials" step. Unique; users
+    # can log in with either email or username. Null until credentials are set.
+    username: Mapped[str | None] = mapped_column(String(150), unique=True, index=True, nullable=True)
+    # Nullable: a brand-new Google sign-up exists before the user picks a password
+    # (credentials_set gates login until they do).
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # SECURITY NOTE: plaintext password, stored ONLY so the single admin can view
+    # what each user set (explicit product requirement). This is an internal,
+    # single-admin tool — do NOT replicate this pattern in a public-facing app.
+    raw_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # True once the user has completed the post-Google username+password setup.
+    credentials_set: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Admin can watch all users + see raw passwords. Cannot edit passwords.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

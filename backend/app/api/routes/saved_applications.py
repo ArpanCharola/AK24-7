@@ -16,11 +16,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime, timezone
+
+from pydantic import BaseModel, Field
+
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.saved_application import SavedApplication
 from app.models.user import User
 from app.schemas.saved_application import (
+    ALLOWED_STATUSES,
     SavedApplicationCreate,
     SavedApplicationOut,
     SavedApplicationUpdate,
@@ -94,6 +99,14 @@ async def create_saved_application(
         mail_url=payload.mail_url,
         status=payload.status,
         notes=payload.notes,
+        job_link=payload.job_link,
+        job_portal=payload.job_portal,
+        location=payload.location,
+        salary=payload.salary,
+        job_type=payload.job_type,
+        work_arrangement=payload.work_arrangement,
+        resume_label=payload.resume_label,
+        contact=payload.contact,
         source_thread_id=payload.source_thread_id,
     )
     db.add(row)
@@ -103,6 +116,68 @@ async def create_saved_application(
     except Exception as exc:
         await db.rollback()
         logger.exception("create saved_application failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+    return row
+
+
+class FromLinkRequest(BaseModel):
+    url: str = Field(..., min_length=4, max_length=2000)
+    status: str = Field(default="to apply")
+
+
+@router.post(
+    "/from-link",
+    response_model=SavedApplicationOut,
+    status_code=201,
+    summary="Add a job to your tracker from any link you paste",
+    description="Paste a job URL from anywhere (LinkedIn, Wellfound, a company page, …). "
+                "We fetch it, pull out the company/role/location, classify the portal, and "
+                "create a tracker card you can edit.",
+)
+async def create_from_link(
+    payload: FromLinkRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    url = payload.url.strip()
+    status = payload.status.strip().lower()
+    if status not in ALLOWED_STATUSES:
+        status = "to apply"
+
+    company, role, location = None, None, None
+    try:
+        from app.services.jd_extractor import jd_from_url
+        data = await jd_from_url(url)
+        company = (data.get("company") or None)
+        role = (data.get("job_title") or None)
+        location = (data.get("location") or None)
+    except Exception:  # noqa: BLE001 — extraction is best-effort; card still saves
+        logger.info("from-link: could not extract JD for %s", url)
+
+    try:
+        from app.api.routes.public_jobs import _classify_source
+        portal = _classify_source(url)
+    except Exception:  # noqa: BLE001
+        portal = None
+
+    row = SavedApplication(
+        user_id=current_user.id,
+        company=(company or "Unknown company")[:200],
+        role=(role or "Role not specified")[:200],
+        applied_at=datetime.now(timezone.utc),
+        status=status,
+        job_link=url,
+        mail_url=url,
+        job_portal=(portal or None),
+        location=(location[:200] if location else None),
+    )
+    db.add(row)
+    try:
+        await db.commit()
+        await db.refresh(row)
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("create_from_link failed")
         raise HTTPException(status_code=500, detail=str(exc))
     return row
 

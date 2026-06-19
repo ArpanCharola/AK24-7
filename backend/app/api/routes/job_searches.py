@@ -1,6 +1,9 @@
-from datetime import datetime
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,7 +13,65 @@ from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.job_search_profile import JobSearchProfile
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Admin/back-end snapshot of every search profile's resolved config, so we can
+# "find jobs for their role beforehand" and admin can inspect them offline.
+_PROFILE_SNAPSHOT_DIR = Path(__file__).resolve().parent.parent.parent / "app" / "data" / "profiles"
+
+
+def _write_profile_snapshot(user_id: int, profile: JobSearchProfile) -> None:
+    try:
+        _PROFILE_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        snap = {
+            "user_id": user_id,
+            "profile_id": profile.id,
+            "name": profile.name,
+            "target_roles": profile.target_roles,
+            "locations": profile.locations,
+            "keywords": profile.keywords,
+            "work_arrangements": profile.work_arrangements,
+            "posted_within_days": profile.posted_within_days,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (_PROFILE_SNAPSHOT_DIR / f"{user_id}_{profile.id}.json").write_text(
+            json.dumps(snap, indent=2), encoding="utf-8"
+        )
+    except Exception as exc:  # noqa: BLE001 — snapshot is best-effort
+        logger.warning("profile snapshot failed for %s/%s: %s", user_id, profile.id, exc)
+
+
+def _profile_dict(profile: JobSearchProfile) -> dict:
+    return {
+        "target_roles": profile.target_roles,
+        "locations": profile.locations,
+        "keywords": profile.keywords,
+        "work_arrangements": profile.work_arrangements,
+        "posted_within_days": profile.posted_within_days,
+        "excluded_companies": profile.excluded_companies,
+        "experience_level": profile.experience_level,
+    }
+
+
+async def _seed_from_pool(profile: JobSearchProfile, user_id: int) -> int:
+    """Instant feed: import matching jobs from the shared pool. Best-effort."""
+    try:
+        from app.agents.job_discovery_agent import seed_user_feed_from_pool
+        return await seed_user_feed_from_pool(user_id, _profile_dict(profile), search_profile_id=profile.id)
+    except Exception:  # noqa: BLE001
+        logger.exception("pool seed failed for profile %s", profile.id)
+        return 0
+
+
+async def _prewarm_discovery(profile_id: int, user_id: int) -> None:
+    """Full live discovery + scoring in-process (no Celery worker needed). Runs in
+    the background after the instant pool-seed so the feed is fresh + complete."""
+    try:
+        from app.workers.tasks import _run_discovery
+        await _run_discovery(profile_id, user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("pre-warm discovery failed for profile %s", profile_id)
 
 
 class JobSearchProfileCreate(BaseModel):
@@ -62,6 +123,7 @@ async def list_searches(
 @router.post("/job-searches", response_model=JobSearchProfileResponse, status_code=201)
 async def create_search(
     body: JobSearchProfileCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -69,6 +131,12 @@ async def create_search(
     db.add(profile)
     await db.commit()
     await db.refresh(profile)
+    # Snapshot the resolved config for admin/back-end + pre-warm this role's feed
+    # so jobs are ready before the user browses.
+    _write_profile_snapshot(current_user.id, profile)
+    if profile.is_active:
+        await _seed_from_pool(profile, current_user.id)  # instant
+        background_tasks.add_task(_prewarm_discovery, profile.id, current_user.id)  # full, in bg
     return profile
 
 
@@ -117,6 +185,7 @@ async def delete_search(
 @router.post("/job-searches/{profile_id}/run", status_code=202)
 async def run_search(
     profile_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -129,6 +198,7 @@ async def run_search(
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Search profile not found")
-    from app.workers.tasks import discover_jobs_task
-    discover_jobs_task.delay(profile_id, current_user.id)
-    return {"status": "discovery started"}
+    # Instant feed from the shared pool, then full live discovery in the background.
+    seeded = await _seed_from_pool(profile, current_user.id)
+    background_tasks.add_task(_prewarm_discovery, profile_id, current_user.id)
+    return {"status": "discovery started", "seeded_from_pool": seeded}

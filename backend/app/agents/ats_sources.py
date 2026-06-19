@@ -203,8 +203,9 @@ async def ashby(client, slugs, profile=None, posted_within_days=None) -> list[di
             if resp.status_code != 200:
                 continue
             data = resp.json()
-            company = (data.get("organization") or {}).get("name") or _company_from_slug(slug)
-            for job in data.get("jobPostings", []):
+            company = (data.get("organization") or {}).get("name") or data.get("name") or _company_from_slug(slug)
+            # Ashby's posting-api returns `jobs` (current) or `jobPostings` (older).
+            for job in (data.get("jobPostings") or data.get("jobs") or []):
                 title = job.get("title", "")
                 if profile and not _matches_criteria(title, profile):
                     continue
@@ -212,7 +213,9 @@ async def ashby(client, slugs, profile=None, posted_within_days=None) -> list[di
                 if any(x in emp_type for x in ("part", "intern", "temp", "volunteer")):
                     continue
                 location = job.get("location") or job.get("locationName") or ""
-                description = _strip_html(job.get("descriptionHtml", ""))
+                if isinstance(location, dict):
+                    location = location.get("name", "")
+                description = _strip_html(job.get("descriptionHtml") or job.get("descriptionPlain") or "")
                 posted_at = _parse_iso(job.get("publishedAt") or job.get("publishedDate"))
                 if not _is_within_days(posted_at, posted_within_days):
                     continue

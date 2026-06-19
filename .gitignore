@@ -6,6 +6,15 @@ backend/*.egg-info/
 backend/.env
 backend/celerybeat-schedule
 backend/celerybeat-schedule.*
+# Bytecode + tool caches (anywhere in the tree)
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# Local backend logs (uvicorn/celery output redirected to files)
+backend/*.log
 
 # User-uploaded content (PII — résumés, cover letters, tailored output)
 backend/uploads/
@@ -25,8 +34,16 @@ CLAUDE.md
 # Deployment notes — local only
 DEPLOY.md
 
+# Internal planning / status notes (Others/) and the job-sourcing research
+# knowledge base (sources/) — useful working docs, but not part of the product repo
+Others/
+sources/
+
 # Playwright MCP session captures (console logs, screenshots) — local artifacts
 .playwright-mcp/
+
+# Local agent memory / handoff system (not part of the app)
+.remember/
 
 # OS
 .DS_Store
