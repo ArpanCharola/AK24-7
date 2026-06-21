@@ -34,6 +34,10 @@ class ProfileResponse(BaseModel):
     portal_email: str | None
     auto_apply_enabled: bool
     daily_auto_apply_cap: int
+    # Simplified profile inputs (replace CTC/notice): total experience + cities.
+    experience_years: int | None = None
+    experience_months: int | None = None
+    preferred_locations: list[str] = []
     # Structured base profile (drives tailoring + the profile editor)
     summary: str | None = None
     work_experience: list[dict] = []
@@ -54,6 +58,9 @@ class ProfileUpdate(BaseModel):
     portal_password: str | None = None
     auto_apply_enabled: bool | None = None
     daily_auto_apply_cap: int | None = None
+    experience_years: int | None = None
+    experience_months: int | None = None
+    preferred_locations: list[str] | None = None
     # Structured base profile
     summary: str | None = None
     work_experience: list[dict] | None = None
@@ -67,7 +74,21 @@ class ProfileUpdate(BaseModel):
 _SCALAR_FIELDS = (
     "full_name", "phone", "location", "linkedin_url", "github_url", "website_url",
     "portal_email", "portal_password", "auto_apply_enabled", "daily_auto_apply_cap",
+    "experience_years", "experience_months",
 )
+
+
+def _parse_locations(raw: str | None) -> list[str]:
+    """Preferred locations persist as a JSON array (legacy rows may be CSV)."""
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+        if isinstance(value, list):
+            return [str(x) for x in value if x]
+    except (ValueError, TypeError):
+        pass
+    return [s.strip() for s in raw.split(",") if s.strip()]
 
 
 def _profile_response(user: User) -> ProfileResponse:
@@ -85,6 +106,9 @@ def _profile_response(user: User) -> ProfileResponse:
         portal_email=user.portal_email,
         auto_apply_enabled=user.auto_apply_enabled,
         daily_auto_apply_cap=user.daily_auto_apply_cap,
+        experience_years=user.experience_years,
+        experience_months=user.experience_months,
+        preferred_locations=_parse_locations(user.preferred_locations),
         summary=structured["summary"] or None,
         work_experience=structured["work_experience"],
         education=structured["education"],
@@ -112,6 +136,9 @@ async def update_profile(
     for field in _SCALAR_FIELDS:
         if field in data:
             setattr(current_user, field, data[field])
+
+    if "preferred_locations" in data:
+        current_user.preferred_locations = json.dumps(data["preferred_locations"])
 
     if "summary" in data:
         # `summary` column comes from Foundation's migration; setattr is a no-op

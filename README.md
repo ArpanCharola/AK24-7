@@ -73,11 +73,11 @@ The supply of employers lives in the **`company_source`** table (the slug regist
 ### Growing & maintaining the registry
 
 ```powershell
-cd backend
-.\venv\Scripts\python.exe scripts\discover_slugs.py              # full wave: curated + seed + Common Crawl
-.\venv\Scripts\python.exe scripts\discover_slugs.py --no-cc      # skip Common Crawl (curated + seed only)
-.\venv\Scripts\python.exe scripts\discover_slugs.py --max 400    # cap probes this run
-.\venv\Scripts\python.exe scripts\discover_slugs.py --revalidate # re-probe existing slugs, prune dead
+# Run from project root — no cd needed
+backend\venv\Scripts\python.exe backend\scripts\discover_slugs.py              # full wave: curated + seed + Common Crawl
+backend\venv\Scripts\python.exe backend\scripts\discover_slugs.py --no-cc      # skip Common Crawl (curated + seed only)
+backend\venv\Scripts\python.exe backend\scripts\discover_slugs.py --max 400    # cap probes this run
+backend\venv\Scripts\python.exe backend\scripts\discover_slugs.py --revalidate # re-probe existing slugs, prune dead
 ```
 
 Discovery harvests ATS URLs from the **Common Crawl** CDX index plus curated lists ([`app/data/india_curated_slugs.json`](backend/app/data/india_curated_slugs.json), [`top_india_companies.json`](backend/app/data/top_india_companies.json)), probes each candidate against the live ATS adapter, and keeps rows with ≥ 1 India role. The registry started from a **34‑slug seed** and is grown toward **500–1,000+** active India endpoints.
@@ -146,14 +146,14 @@ frontend/
 
 ```powershell
 cd backend
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
+# Use the explicit Python 3.12 path — never "python -m venv" (picks up wrong interpreter)
+C:\Users\x\AppData\Local\Programs\Python\Python312\python.exe -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
 
 copy .env.example .env
 # Fill in OPENAI_API_KEY, GOOGLE_CLIENT_ID/SECRET, DATABASE_URL, etc.
 
-alembic upgrade head
+.\venv\Scripts\python.exe -m alembic upgrade head
 ```
 
 ### Frontend

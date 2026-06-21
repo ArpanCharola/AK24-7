@@ -144,6 +144,8 @@ export const emailApi = {
   labelMessages: (labelId, limit = 25) =>
     api.get(`/email/labels/${encodeURIComponent(labelId)}/messages`, { params: { limit } }),
   syncLabels: () => api.post("/email/labels/sync"),
+  // Create a custom label. body: { name, nest_under?, purpose? }
+  createLabel: (body) => api.post("/email/labels", body),
   compose: (body) => api.post("/email/compose", body),
   send: (body) => api.post("/email/send", body),
   setAutoLabel: (enabled) => api.post("/email/auto-label", { enabled }),

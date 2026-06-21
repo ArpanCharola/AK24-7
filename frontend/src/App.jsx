@@ -6,15 +6,15 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
-import DiscoveredJobs from "./pages/DiscoveredJobs";
-import TailoredResumes from "./pages/TailoredResumes";
+import Jobs from "./pages/Jobs";
+import TailorResume from "./pages/TailorResume";
 import EmailAuto from "./pages/EmailAuto";
 import Tracker from "./pages/Tracker";
-import Inbox from "./pages/Inbox";
-import PublicJobs from "./pages/PublicJobs";
 import Admin from "./pages/Admin";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: 1, staleTime: 2 * 60 * 1000 } },
+});
 
 function PrivateRoute({ children }) {
   return localStorage.getItem("token") ? (
@@ -24,8 +24,8 @@ function PrivateRoute({ children }) {
   );
 }
 
-// "/" is the job-seeker Dashboard for normal users; the admin is a management-only
-// account, sent straight to /admin so they never see the job-seeker UI.
+// "/" routes by role: the admin is a management-only account sent straight to
+// /admin; every other user lands on the job-seeker dashboard.
 function HomeRoute() {
   const { data: me, isLoading } = useQuery({
     queryKey: ["me"],
@@ -35,7 +35,7 @@ function HomeRoute() {
   });
   if (isLoading) return null;
   if (me?.is_admin) return <Navigate to="/admin" replace />;
-  return <Dashboard />;
+  return <Navigate to="/dashboard" replace />;
 }
 
 export default function App() {
@@ -44,18 +44,21 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          {/* Public — accessible without login. */}
-          <Route path="/jobs" element={<PublicJobs />} />
+          {/* Root redirects by role. */}
           <Route path="/" element={<PrivateRoute><HomeRoute /></PrivateRoute>} />
-          <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
-          <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
-          <Route path="/discovered-jobs" element={<PrivateRoute><DiscoveredJobs /></PrivateRoute>} />
-          <Route path="/tailored-resumes" element={<PrivateRoute><TailoredResumes /></PrivateRoute>} />
-          <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
+          {/* Private app routes. */}
+          <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/jobs" element={<PrivateRoute><Jobs /></PrivateRoute>} />
+          <Route path="/tailor-resume" element={<PrivateRoute><TailorResume /></PrivateRoute>} />
           <Route path="/email-auto" element={<PrivateRoute><EmailAuto /></PrivateRoute>} />
           <Route path="/tracker" element={<PrivateRoute><Tracker /></PrivateRoute>} />
-          {/* Inbox kept routable (not in nav) until the unified Emails page lands. */}
-          <Route path="/inbox" element={<PrivateRoute><Inbox /></PrivateRoute>} />
+          <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
+          <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
+          <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
+          {/* Back-compat redirects for old URLs. */}
+          <Route path="/discovered-jobs" element={<Navigate to="/jobs" replace />} />
+          <Route path="/tailored-resumes" element={<Navigate to="/tailor-resume" replace />} />
+          <Route path="/inbox" element={<Navigate to="/email-auto" replace />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

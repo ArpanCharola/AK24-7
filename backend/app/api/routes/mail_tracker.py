@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.models.saved_application import SavedApplication
 from app.models.user import User
 from app.services import application_extract, cache, gmail_client
+from app.services.email_classifiers import is_promotional
 from app.services.application_tracker import (
     DEFAULT_DAYS,
     genuine_deduped,
@@ -135,11 +136,20 @@ async def auto_track(
 
     created = 0
     already = 0
+    skipped_promo = 0
     for msg in messages:
         thread_id = msg.get("thread_id") or msg.get("id") or ""
         if not thread_id or thread_id in tracked:
             already += 1
             continue
+
+        # Subtractive guard: never turn a job-board alert/promo ("your profile is
+        # a match!", "hiring alert") into a tracker card, even if it slipped past
+        # the upstream genuine-application filter.
+        if is_promotional(msg.get("subject") or "", msg.get("snippet") or ""):
+            skipped_promo += 1
+            continue
+
         tracked.add(thread_id)  # intra-batch dedup
 
         fields = await application_extract.extract(
@@ -167,5 +177,11 @@ async def auto_track(
         raise HTTPException(status_code=500, detail=str(exc))
 
     # Counts only — never log company/role/subjects. PII discipline.
-    logger.info("[auto-track] created %d / already %d / detected %d", created, already, len(messages))
-    return {"created": created, "already_tracked": already, "detected": len(messages)}
+    logger.info("[auto-track] created %d / already %d / promo-skipped %d / detected %d",
+                created, already, skipped_promo, len(messages))
+    return {
+        "created": created,
+        "already_tracked": already,
+        "skipped_promotional": skipped_promo,
+        "detected": len(messages),
+    }

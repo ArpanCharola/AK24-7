@@ -48,3 +48,6 @@ sources/
 # OS
 .DS_Store
 Thumbs.db
+
+# SDD workflow scratch (local only)
+.superpowers/

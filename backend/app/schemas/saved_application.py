@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 # Pipeline stages a saved application can sit in. Kept in lockstep with the
 # frontend's status filter + badge colors. "to apply" is the pre-application
 # stage from the user's spreadsheet (a job saved but not yet applied to).
-ALLOWED_STATUSES = ("to apply", "applied", "assessment", "interview")
+ALLOWED_STATUSES = ("to apply", "applied", "assessment", "interview", "offer", "rejected")
 
 
 def _validate_status(value: str) -> str:

@@ -108,3 +108,13 @@ async def list_labels(token: str) -> list[dict]:
         _raise_for(resp)
         labs = resp.json().get("labels", []) or []
         return [{"id": l.get("id"), "name": l.get("name"), "type": l.get("type")} for l in labs]
+
+
+async def create_label(token: str, name: str, color: dict | None = None) -> dict:
+    """Create one user label. Gmail nests via a 'Parent/Child' name. If the label
+    already exists (409), returns the existing id instead of erroring."""
+    async with httpx.AsyncClient(timeout=10.0, headers=_auth(token)) as client:
+        lid = await _create(client, name, color)
+        if lid is None:  # 409 — already exists, look up its id
+            lid = (await _list(client)).get(name)
+        return {"id": lid, "name": name}

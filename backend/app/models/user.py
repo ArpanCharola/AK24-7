@@ -63,6 +63,10 @@ class User(Base):
     expected_ctc_lpa: Mapped[float | None] = mapped_column(Float, nullable=True)
     notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preferred_locations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Total professional experience, split years + months. Drives the
+    # Entry / Mid / Senior level the job search targets.
+    experience_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    experience_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Credentials used by the agent on job portals (separate from app login)
     portal_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     portal_password: Mapped[str | None] = mapped_column(String(255), nullable=True)

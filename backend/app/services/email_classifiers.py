@@ -33,6 +33,31 @@ _APPLICATION_PHRASES = [
     "application has been successfully submitted",
 ]
 
+
+# ── Promotional / job-alert guard ───────────────────────────────────────────
+# Job boards (Unstop, Wellfound, Naukri, Internshala, LinkedIn, …) send "your
+# profile is a match!" / "hiring alert" / "jobs near you" blasts. These are NOT
+# application confirmations and must never become Job Tracker cards, even when an
+# upstream filter let them through. Used as a subtractive veto at card creation.
+_PROMO_PHRASES = (
+    "your profile is a match", "profile is a perfect match", "profile is perfect for",
+    "hiring alert", "jobs near you", "jobs for you", "internships near you",
+    "are you still interested", "don't forget to finish applying",
+    "discover top jobs", "discover internships", "recommended for you",
+    "check out these jobs", "job alert", "new jobs matching", "jobs matching your profile",
+    "similar jobs", "top internships", "top jobs", "new openings", "apply now",
+    "don't miss out", "complete your application to", "still accepting applications",
+)
+
+
+def is_promotional(subject: str, snippet: str = "") -> bool:
+    """True when the email reads like a job-board alert/promo rather than a real
+    application confirmation. Conservative — only fires on unambiguous promo
+    phrasing so genuine confirmations are never dropped."""
+    text = f"{subject or ''} {snippet or ''}".lower()
+    return any(phrase in text for phrase in _PROMO_PHRASES)
+
+
 _PERSONAL_DOMAINS = frozenset({
     "gmail.com", "googlemail.com",
     "yahoo.com", "yahoo.co.in", "yahoo.co.uk", "yahoo.ca", "ymail.com",
@@ -53,6 +78,9 @@ _AGGREGATOR_DOMAINS = (
     # confirmations, so a sender on these domains is a hard veto for every label.
     "foundit.in", "monsterindia.com", "timesjobs.com", "apna.co",
     "internshala.com", "glassdoor.co.in",
+    # Unstop (ex-Dare2Compete) blasts "Hiring Alert" / "your profile is a match"
+    # promos from no-reply addresses — never application confirmations.
+    "unstop.com", "dare2compete.com",
 )
 
 # Sender-domain intelligence (see classify_domain). A trusted assessment- or

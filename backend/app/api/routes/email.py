@@ -383,6 +383,43 @@ async def labels_sync(current_user: User = Depends(get_current_user), db: AsyncS
     return {"labeled": int(summary.get("labeled", 0)), "per_label": per_label}
 
 
+class CreateLabelRequest(BaseModel):
+    name: str
+    nest_under: str | None = None   # parent label NAME; Gmail nests via "Parent/Child"
+    purpose: str | None = None      # General | Job Alerts | Interviews | Assessments | Rejections
+
+
+# Purpose → a sensible Gmail label color (validated bg/text pairs).
+_PURPOSE_COLORS = {
+    "Job Alerts":  {"backgroundColor": "#ffad47", "textColor": "#ffffff"},
+    "Interviews":  {"backgroundColor": "#4986e7", "textColor": "#ffffff"},
+    "Assessments": {"backgroundColor": "#16a766", "textColor": "#ffffff"},
+    "Rejections":  {"backgroundColor": "#999999", "textColor": "#ffffff"},
+}
+
+
+@router.post("/labels")
+async def create_label_endpoint(
+    body: CreateLabelRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a custom Gmail label (optionally nested under a parent) for the
+    user-defined labels in the email page."""
+    if not gmail_client.scopes_can_label(current_user.gmail_scopes):
+        raise HTTPException(status_code=403, detail="Reconnect Gmail to grant label permission.")
+    token = await _require_token(current_user, db)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Label name is required")
+    full = f"{body.nest_under}/{name}" if body.nest_under else name
+    from app.services.gmail_labels import create_label
+    try:
+        return await create_label(token, full, _PURPOSE_COLORS.get(body.purpose or ""))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't create label — {exc}")
+
+
 class ComposeRequest(BaseModel):
     purpose: str = "follow_up"            # follow_up | thank_you | reply | outreach
     application_id: int | None = None
