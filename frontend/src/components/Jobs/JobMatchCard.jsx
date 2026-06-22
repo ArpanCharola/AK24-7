@@ -1,5 +1,4 @@
-import { useNavigate } from "react-router-dom";
-import { MapPin, Briefcase, ExternalLink, FileText, Clock, Zap } from "lucide-react";
+import { MapPin, Briefcase, ExternalLink, Clock, Zap } from "lucide-react";
 import { timeAgo, salaryLabel } from "../../lib/format";
 
 function MatchBadge({ score }) {
@@ -23,19 +22,17 @@ function LogoAvatar({ name }) {
 // Elevated, Jobright-style match card. Match score renders only when real
 // (match_score != null) — never a placeholder.
 export default function JobMatchCard({ job }) {
-  const navigate = useNavigate();
   const salary = salaryLabel(job);
 
-  function tailorAndApply() {
+  function apply() {
+    if (!job.job_url) return;
     // Stash the job so the "Did you apply?" prompt can offer to add it to the
-    // tracker when the user returns from applying.
+    // tracker when the user returns from the employer's site.
     localStorage.setItem(
       "pendingApply",
       JSON.stringify({ company: job.company, role: job.title, job_link: job.job_url })
     );
-    // The tailor page auto-extracts the JD from ?job_url=.
-    const q = job.job_url ? `?job_url=${encodeURIComponent(job.job_url)}` : "";
-    navigate(`/tailor-resume${q}`);
+    window.open(job.job_url, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -60,19 +57,12 @@ export default function JobMatchCard({ job }) {
       </div>
 
       <div className="flex items-center gap-2 pt-1 border-t border-border">
-        <button onClick={tailorAndApply} className="btn-gradient !py-1.5 !px-3 text-[12px] flex-1">
-          <FileText size={13} /> Tailor &amp; Apply
-        </button>
-        {job.job_url && (
-          <a
-            href={job.job_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary !py-1.5 !px-3 text-[12px]"
-            title="Open job description"
-          >
-            <ExternalLink size={13} /> JD
-          </a>
+        {job.job_url ? (
+          <button onClick={apply} className="btn-gradient !py-1.5 !px-3 text-[12px] flex-1">
+            <ExternalLink size={13} /> Apply
+          </button>
+        ) : (
+          <span className="text-[11.5px] text-muted-foreground py-1.5">No application link</span>
         )}
       </div>
     </div>

@@ -118,7 +118,7 @@ export default function Profile() {
     });
   }
 
-  // 5 required fields drive the completion gate shared with /jobs + /tailor-resume.
+  // 5 required fields drive the completion gate shared with /jobs.
   const required = [
     !!form.full_name.trim(),
     !!form.phone.trim(),
@@ -137,7 +137,7 @@ export default function Profile() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
-            The essentials we need to find and tailor jobs for you.
+            The essentials we need to find the right jobs for you.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
@@ -150,7 +150,7 @@ export default function Profile() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Resume — required, also autofills name/phone/skills */}
-        <Card title="Resume" subtitle="Required — used to tailor your applications. We'll autofill what we can.">
+        <Card title="Resume" subtitle="Required — used to match you to jobs. We'll autofill what we can.">
           <input ref={resumeInputRef} type="file" accept=".pdf" className="hidden"
                  onChange={(e) => { handleResume(e.target.files?.[0]); e.target.value = ""; }} />
           <div
@@ -225,7 +225,7 @@ export default function Profile() {
         </Card>
 
         {/* Links */}
-        <Card title="Links" subtitle="Optional — surfaced on tailored resumes.">
+        <Card title="Links" subtitle="Optional — your professional links.">
           <div className="space-y-4">
             {LINK_FIELDS.map(({ key, label, placeholder }) => (
               <Field key={key} label={label}>

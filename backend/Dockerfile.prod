@@ -1,24 +1,16 @@
 # Production image for free-tier hosts (Render free Web Service, ~512 MB RAM).
-# Identical to ./Dockerfile EXCEPT it skips the Playwright/Chromium browser
-# install (~400 MB). Chromium is only used by Tier-3 scraping (TIER3_ENABLED=false
-# by default) and the legacy auto-apply agent (not part of the India-aggregator
-# UI), so it's dead weight here. LibreOffice is KEPT — résumé DOCX→PDF rendering
-# (resume_builder.py) is a core feature. Point Render's "Dockerfile Path" at this
-# file: backend/Dockerfile.prod
+# Web-only: skips the Playwright/Chromium browser install (~400 MB; only Tier-3
+# scraping uses it, TIER3_ENABLED=false) AND LibreOffice + the resume-formatter
+# clone — résumé tailoring/PDF was removed from the product, so they're dead
+# weight here. Point Render's "Dockerfile Path" at this file: backend/Dockerfile.prod
 FROM python:3.12-slim
 
-# System deps:
-#   libpq-dev / gcc — asyncpg builds
-#   libreoffice-core/writer + fonts — DOCX -> PDF via soffice (resume_builder.py)
+# System deps: libpq-dev / gcc — asyncpg builds; git — pip VCS deps; curl — health.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq-dev \
       gcc \
       git \
       curl \
-      libreoffice-core \
-      libreoffice-writer \
-      fonts-liberation \
-      fonts-dejavu-core \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,22 +24,13 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # NOTE: `python -m playwright install chromium` is intentionally omitted here to
 # fit the free-tier RAM/build budget. Re-add it if you enable TIER3_ENABLED.
 
-# Vendor the resume-formatter repo so PDF rendering works inside the image.
-ARG RESUME_FORMATTER_REPO=https://github.com/skilluence/resume-formatter.git
-ARG RESUME_FORMATTER_REF=main
-RUN git clone --depth 1 --branch ${RESUME_FORMATTER_REF} ${RESUME_FORMATTER_REPO} /opt/resume-formatter \
-    && if [ -f /opt/resume-formatter/backend/requirements.txt ]; then \
-         pip install --no-cache-dir -r /opt/resume-formatter/backend/requirements.txt; \
-       fi
-ENV RESUME_FORMATTER_PATH=/opt/resume-formatter
-
 # App code
 COPY . .
 
 # Non-root runtime user. Uploads dir is owned by app so volume mounts inherit perms.
 RUN useradd -m -u 1000 app \
     && mkdir -p /app/uploads /home/app/.cache \
-    && chown -R app:app /app /home/app/.cache /opt/resume-formatter \
+    && chown -R app:app /app /home/app/.cache \
         && chmod +x /app/start.sh
 USER app
 

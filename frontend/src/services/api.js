@@ -88,24 +88,6 @@ export const jobSearchesApi = {
   run: (id) => api.post(`/job-searches/${id}/run`),
 };
 
-export const tailoredResumesApi = {
-  list: () => api.get("/tailored-resumes"),
-  get: (id) => api.get(`/tailored-resumes/${id}`),
-  // Fetch through axios (responseType: "blob") so the auth interceptor attaches
-  // the JWT. A bare <a href> would navigate without the token → 401 "Not authenticated".
-  pdf: (id) => api.get(`/tailored-resumes/${id}/pdf`, { responseType: "blob" }),
-  update: (id, body) => api.put(`/tailored-resumes/${id}`, body),
-  retailor: (id) => api.post(`/tailored-resumes/${id}/retailor`),
-  regeneratePdf: (id) => api.post(`/tailored-resumes/${id}/regenerate-pdf`),
-  // body: { resume_text, job_description?, job_url?, label? }. When job_url is
-  // given the backend extracts the JD from the link before tailoring.
-  quick: (body) => api.post("/tailored-resumes/quick", body),
-  // Extract a job description from a pasted job link. body: { job_url }.
-  // Returns { job_description, job_title?, company? }. PLAN Phase 4.
-  extractJd: (jobUrl) => api.post("/tailored-resumes/extract-jd", { job_url: jobUrl }),
-  remove: (id) => api.delete(`/tailored-resumes/${id}`),
-};
-
 // Resume-driven, AI-scored job matches (Jobright-style feed). The matching
 // service (PLAN Phase 3 / contract #5) writes ranked matches per user; the feed
 // returns DiscoveredJob-shaped rows enriched with match_score, match_explanation,

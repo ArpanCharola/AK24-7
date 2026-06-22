@@ -7,7 +7,6 @@ import Login from "./pages/Login";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import Jobs from "./pages/Jobs";
-import TailorResume from "./pages/TailorResume";
 import EmailAuto from "./pages/EmailAuto";
 import Tracker from "./pages/Tracker";
 import Admin from "./pages/Admin";
@@ -49,7 +48,6 @@ export default function App() {
           {/* Private app routes. */}
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/jobs" element={<PrivateRoute><Jobs /></PrivateRoute>} />
-          <Route path="/tailor-resume" element={<PrivateRoute><TailorResume /></PrivateRoute>} />
           <Route path="/email-auto" element={<PrivateRoute><EmailAuto /></PrivateRoute>} />
           <Route path="/tracker" element={<PrivateRoute><Tracker /></PrivateRoute>} />
           <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
@@ -57,7 +55,9 @@ export default function App() {
           <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
           {/* Back-compat redirects for old URLs. */}
           <Route path="/discovered-jobs" element={<Navigate to="/jobs" replace />} />
-          <Route path="/tailored-resumes" element={<Navigate to="/tailor-resume" replace />} />
+          {/* Resume-tailoring was removed; old links fall back to Jobs. */}
+          <Route path="/tailor-resume" element={<Navigate to="/jobs" replace />} />
+          <Route path="/tailored-resumes" element={<Navigate to="/jobs" replace />} />
           <Route path="/inbox" element={<Navigate to="/email-auto" replace />} />
         </Routes>
       </BrowserRouter>

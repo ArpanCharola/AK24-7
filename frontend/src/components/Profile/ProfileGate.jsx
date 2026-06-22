@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { AlertCircle } from "lucide-react";
 
-// Shown on /jobs and /tailor-resume when the profile is missing required fields.
+// Shown on /jobs when the profile is missing required fields.
 // `completed` is the count of the 5 required fields filled.
 export default function ProfileGate({ completed, required = 5 }) {
   if (completed >= required) return null;

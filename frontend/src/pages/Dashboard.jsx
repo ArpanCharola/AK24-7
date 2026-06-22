@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Briefcase, Send, FileText, Target } from "lucide-react";
+import { Briefcase, Send, Target } from "lucide-react";
 import { authApi } from "../services/api";
 import { useDashboardStats } from "../hooks/useDashboard";
 import { useMatches } from "../hooks/useMatches";
@@ -45,14 +45,12 @@ export default function Dashboard() {
         <p className="text-[13px] text-muted-foreground mt-0.5">Here's your job search at a glance.</p>
       </div>
 
-      {/* 4 real-number tiles */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 3 real-number tiles */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <Tile icon={Briefcase} label="Jobs Found" value={stats?.jobs_found ?? "—"}
               sub="View all jobs →" onClick={() => navigate("/jobs")} />
         <Tile icon={Send} label="Applied" value={stats?.jobs_applied ?? "—"}
               sub="Open tracker →" onClick={() => navigate("/tracker")} />
-        <Tile icon={FileText} label="Tailored Resumes" value={stats?.tailored_resumes ?? "—"}
-              sub="Tailor a resume →" onClick={() => navigate("/tailor-resume")} />
         <Tile icon={Target} label="Target Roles" value={roles.length || "—"}
               sub={roles.length ? roles.join(" · ") : "Set in profile →"} onClick={() => navigate("/profile")} />
       </div>

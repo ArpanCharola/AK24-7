@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  LayoutDashboard, Search, FileText, Mail, Table2, ShieldCheck,
+  LayoutDashboard, Search, Mail, Table2, ShieldCheck,
   Sun, Moon, LogOut, X,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
@@ -13,7 +13,6 @@ const BRAND_VARIANT = "ak-emblem";
 const NAV = [
   { path: "/dashboard",     label: "Dashboard",   icon: LayoutDashboard },
   { path: "/jobs",          label: "Jobs",        icon: Search },
-  { path: "/tailor-resume", label: "Resume",      icon: FileText },
   { path: "/email-auto",    label: "Email",       icon: Mail },
   { path: "/tracker",       label: "Job Tracker", icon: Table2 },
 ];

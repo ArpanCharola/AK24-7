@@ -3,15 +3,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 import api from "../services/api";
 
-// After "Tailor & Apply", a pendingApply job sits in localStorage. Once the user
-// leaves the tailor page (presumably after applying), prompt them to track it.
+// After the user clicks "Apply" on a job card, a pendingApply job sits in
+// localStorage. Once they return, prompt them to add it to the tracker.
 export default function ApplyPrompt() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [pending, setPending] = useState(null);
 
   useEffect(() => {
-    if (pathname.startsWith("/tailor-resume")) { setPending(null); return; }
     try {
       const raw = localStorage.getItem("pendingApply");
       setPending(raw ? JSON.parse(raw) : null);

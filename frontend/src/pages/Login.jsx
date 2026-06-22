@@ -79,7 +79,6 @@ export default function Login() {
   const features = [
     "Discovers real jobs across India from free sources",
     "AI scores each role against your profile with why-fit",
-    "Tailors an ATS-optimized resume from a JD or job link",
     "Orion copilot for interview prep & skill-gap advice",
   ];
 
@@ -102,8 +101,8 @@ export default function Login() {
             </h1>
             <p className="mt-5 text-[15px] leading-relaxed text-slate-600">
               Drop in your resume and AK24/7Jobs surfaces real openings from across India,
-              ranks each by how well it fits — with the why and the skill gaps — and tailors an
-              ATS-ready resume for every application.
+              ranking each by how well it fits — with the why and the skill gaps —
+              so you always know where to apply next.
             </p>
 
             <ul className="mt-8 space-y-3">
