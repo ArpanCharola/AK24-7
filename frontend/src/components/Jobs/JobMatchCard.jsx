@@ -36,21 +36,22 @@ export default function JobMatchCard({ job }) {
   }
 
   return (
-    <div className="glass rounded-2xl p-4 flex flex-col gap-3 hover-lift">
+    <article className="glass relative p-5 flex flex-col gap-4 hover-lift job-match-card">
+      {job.posted_at && <span className="posted-stamp absolute right-3 top-3">POSTED {timeAgo(job.posted_at).toUpperCase()}</span>}
       <div className="flex items-start gap-3">
         <LogoAvatar name={job.company} />
         <div className="flex-1 min-w-0">
           <p className="text-[13.5px] font-semibold text-foreground truncate">{job.company || "Unknown company"}</p>
           <p className="text-[12.5px] text-muted-foreground truncate">{job.title || "Role"}</p>
         </div>
-        <MatchBadge score={job.match_score} />
+        <div className="pr-20"><MatchBadge score={job.match_score} /></div>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted-foreground">
         {job.location && <span className="inline-flex items-center gap-1"><MapPin size={12} />{job.location}</span>}
         {job.work_arrangement && <span className="inline-flex items-center gap-1"><Briefcase size={12} />{job.work_arrangement}</span>}
         {salary && <span className="tnum">{salary}</span>}
-        {job.posted_at && <span className="inline-flex items-center gap-1"><Clock size={12} />{timeAgo(job.posted_at)}</span>}
+        {job.posted_at && <span className="inline-flex items-center gap-1 sr-only"><Clock size={12} />{timeAgo(job.posted_at)}</span>}
         {job.is_early_applicant && (
           <span className="pill pill-brand"><Zap size={11} /> Early applicant</span>
         )}
@@ -65,6 +66,6 @@ export default function JobMatchCard({ job }) {
           <span className="text-[11.5px] text-muted-foreground py-1.5">No application link</span>
         )}
       </div>
-    </div>
+    </article>
   );
 }

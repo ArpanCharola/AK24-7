@@ -82,12 +82,12 @@ def start_scheduler() -> None:
     # Freshness-biased cadence (IST): general pool warm + per-profile discovery
     # every 3h so 24h/7d jobs surface fast; registry revalidation off-peak at 03:00;
     # digest 07:30.
-    scheduler.add_job(_run_pool_warm, CronTrigger(hour="*/3", minute=10), id="pool_warm", replace_existing=True)
-    scheduler.add_job(_run_scheduled_discovery, CronTrigger(hour="*/3", minute=30), id="discovery", replace_existing=True)
+    # Shared aggregation is owned by the single Celery Beat process. Do not
+    # schedule it in API workers: every worker would otherwise duplicate work.
     scheduler.add_job(_run_slug_revalidation, CronTrigger(hour=3, minute=0), id="slug_revalidate", replace_existing=True)
     scheduler.add_job(_run_daily_digest, CronTrigger(hour=7, minute=30), id="digest", replace_existing=True)
     scheduler.start()
-    logger.info("APScheduler started (pool warm + discovery */3h, revalidate 03:00, digest 07:30 IST)")
+    logger.info("APScheduler started (ancillary revalidation + digest only)")
 
 
 def shutdown_scheduler() -> None:

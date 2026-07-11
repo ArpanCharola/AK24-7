@@ -98,7 +98,6 @@ export default function AnimatedDots({
       window.removeEventListener("resize", resize);
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dotsNum, dotRadius, dotSpacing, speedRange, backgroundColor, opacity, blendMode, fullScreen, colors]);
 
   return (

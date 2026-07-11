@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { authApi } from "../services/api";
 import SetCredentialsModal from "../components/SetCredentialsModal";
 import { Wordmark } from "../components/brand/Logo";
-import AmbientBackground from "../components/AmbientBackground";
+import Footer from "../components/Layout/Footer";
+import { Eye, EyeOff } from "lucide-react";
 
 // Chosen brand mark: the AK emblem (interlocked ligature in a gradient badge).
 const BRAND_VARIANT = "ak-emblem";
@@ -21,9 +22,11 @@ export default function Login() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Handle the return from "Continue with Google".
   useEffect(() => {
+    document.documentElement.classList.remove("dark");
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     const setup = params.get("setup");
@@ -34,7 +37,7 @@ export default function Login() {
       if (setup === "1") {
         setNeedsSetup(true); // open the username/password popup
       } else {
-        navigate("/", { replace: true });
+        navigate("/dashboard", { replace: true });
       }
       return;
     }
@@ -68,7 +71,7 @@ export default function Login() {
         const me = await authApi.me();
         isAdmin = !!me.data?.is_admin;
       } catch { /* fall back to home on /me failure */ }
-      navigate(isAdmin ? "/admin" : "/");
+      navigate(isAdmin ? "/admin" : "/dashboard");
     } catch (err) {
       setError(err.response?.data?.detail || "Invalid credentials");
     } finally {
@@ -79,26 +82,22 @@ export default function Login() {
   const features = [
     "Discovers real jobs across India from free sources",
     "AI scores each role against your profile with why-fit",
-    "Orion copilot for interview prep & skill-gap advice",
+    "Tracks applications and email updates in one focused workspace",
   ];
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background">
-      <AmbientBackground />
+    <div className="login-page">
       {needsSetup && (
-        <SetCredentialsModal onDone={() => navigate("/", { replace: true })} />
+        <SetCredentialsModal onDone={() => navigate("/dashboard", { replace: true })} />
       )}
-      <div className="relative z-10 grid lg:grid-cols-2 min-h-screen">
+      <div className="relative z-10 grid lg:grid-cols-2 login-grid">
         {/* Left: brand / pitch */}
-        <div className="hidden lg:flex flex-col p-10 xl:p-14">
+        <div className="login-story hidden lg:flex flex-col p-10 xl:p-14">
           <Wordmark variant={BRAND_VARIANT} size={42} />
 
-          <div className="max-w-md animate-slide-up my-auto py-10">
-            <h1 className="font-display text-[44px] leading-[1.04] font-extrabold text-slate-900 tracking-tight">
-              Every job in India,
-              <br />
-              <span className="text-brand-gradient">matched to your resume.</span>
-            </h1>
+          <div className="login-story-copy max-w-md animate-slide-up my-auto py-10">
+            <span className="editorial-kicker">The career edition · India</span>
+            <h1>Find work<br /><em>worth showing up for.</em></h1>
             <p className="mt-5 text-[15px] leading-relaxed text-slate-600">
               Drop in your resume and AK24/7Jobs surfaces real openings from across India,
               ranking each by how well it fits — with the why and the skill gaps —
@@ -122,8 +121,8 @@ export default function Login() {
         </div>
 
         {/* Right: glass auth card */}
-        <div className="flex items-center justify-center p-6 lg:p-10">
-          <div className="w-full max-w-sm glass-strong rounded-3xl p-8 animate-slide-up">
+        <div className="login-form-side flex items-center justify-center p-6 lg:p-10">
+          <div className="login-card w-full max-w-sm glass-strong p-8 animate-slide-up">
             {/* Mobile brand */}
             <div className="mb-6 lg:hidden">
               <Wordmark variant={BRAND_VARIANT} size={36} tagline={null} />
@@ -150,14 +149,21 @@ export default function Login() {
                 <label className="block text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
                   Password
                 </label>
+                <div className="password-field">
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   placeholder="••••••••"
                   required
                   value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  className="input-glass"
+                  className="input-glass !pr-12"
                 />
+                <button type="button" onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword} className="password-toggle">
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+                </div>
               </div>
 
               {notice && (
@@ -228,6 +234,7 @@ export default function Login() {
           </div>
         </div>
       </div>
+      <Footer publicView />
     </div>
   );
 }

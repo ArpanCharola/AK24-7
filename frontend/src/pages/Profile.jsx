@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, UploadCloud } from "lucide-react";
+import { CheckCircle2, Loader2, UploadCloud } from "lucide-react";
 import { useProfile, useUpdateProfile, useImportResume } from "../hooks/useProfile";
 import TagInput from "../components/Profile/TagInput";
 import CityMultiSelect from "../components/Profile/CityMultiSelect";

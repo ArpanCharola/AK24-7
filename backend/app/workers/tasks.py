@@ -262,6 +262,20 @@ def scheduled_discovery_task(self):
     asyncio.run(_run_scheduled_discovery())
 
 
+@celery_app.task(bind=True, name="aggregate_job_warehouse")
+def aggregate_job_warehouse_task(self, trigger: str = "scheduled"):
+    """Authoritative shared aggregation entrypoint; safe to retry."""
+    from app.services.aggregation import run_aggregation
+    return asyncio.run(run_aggregation(trigger=trigger))
+
+
+@celery_app.task(bind=True, name="cleanup_job_warehouse")
+def cleanup_job_warehouse_task(self):
+    """Expire day-eight jobs and purge retained heavy content."""
+    from app.services.aggregation import cleanup_warehouse
+    return asyncio.run(cleanup_warehouse())
+
+
 async def _run_scheduled_discovery():
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from sqlalchemy import select

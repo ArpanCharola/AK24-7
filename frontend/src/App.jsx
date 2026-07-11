@@ -1,15 +1,16 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import AppLayout from "./components/Layout/AppLayout";
 import { authApi } from "./services/api";
-import Dashboard from "./pages/Dashboard";
-import Login from "./pages/Login";
-import Profile from "./pages/Profile";
-import Settings from "./pages/Settings";
-import Jobs from "./pages/Jobs";
-import EmailAuto from "./pages/EmailAuto";
-import Tracker from "./pages/Tracker";
-import Admin from "./pages/Admin";
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Login = lazy(() => import("./pages/Login"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Jobs = lazy(() => import("./pages/Jobs"));
+const EmailAuto = lazy(() => import("./pages/EmailAuto"));
+const Tracker = lazy(() => import("./pages/Tracker"));
+const Admin = lazy(() => import("./pages/Admin"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 2 * 60 * 1000 } },
@@ -41,6 +42,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <Suspense fallback={<div className="route-loader"><span className="posted-stamp">PREPARING YOUR DESK</span></div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
           {/* Root redirects by role. */}
@@ -60,6 +62,7 @@ export default function App() {
           <Route path="/tailored-resumes" element={<Navigate to="/jobs" replace />} />
           <Route path="/inbox" element={<Navigate to="/email-auto" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </QueryClientProvider>
   );

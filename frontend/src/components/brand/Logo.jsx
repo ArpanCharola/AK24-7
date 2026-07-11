@@ -112,8 +112,8 @@ export default function Logo({ variant = "ak-tile", size = 36, className = "", .
     >
       <defs>
         <linearGradient id={gid} x1="2" y1="4" x2="40" y2="36" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#7C3AED" />
-          <stop offset="1" stopColor="#06B6D4" />
+          <stop offset="0" stopColor="#0F5B45" />
+          <stop offset="1" stopColor="#B8862E" />
         </linearGradient>
       </defs>
       <Marks variant={variant} gid={gid} />
@@ -130,8 +130,8 @@ export function Wordmark({ variant = "ak-tile", size = 34, tagline = "Jobs in In
     <div className={`flex items-center gap-2.5 ${className}`}>
       <Logo variant={variant} size={size} />
       <div className="flex flex-col leading-tight">
-        <span className="font-display text-[15px] font-extrabold tracking-tight text-foreground">
-          AK<span className="text-brand-gradient">24/7</span>Jobs
+        <span className="font-display text-[18px] font-semibold italic tracking-tight text-foreground">
+          AK<span className="text-brand-gradient">24/7</span> Jobs
         </span>
         {tagline && (
           <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground font-semibold">

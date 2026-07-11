@@ -9,5 +9,22 @@ from app.models.saved_application import SavedApplication
 from app.models.job_pool import JobPool
 from app.models.company_source import CompanySource
 from app.models.discovery_run import DiscoveryRun
+from app.models.job_warehouse import (
+    AggregationRun,
+    CanonicalJob,
+    DemandCluster,
+    Employer,
+    JobRejection,
+    JobSourceSighting,
+    ProfileDemandMembership,
+    ProfileJobMatch,
+    SourceRunMetric,
+)
 
-__all__ = ["User", "JobApplication", "TailoredResume", "JobSearchProfile", "DiscoveredJob", "CoverLetter", "SentEmail", "SavedApplication", "JobPool", "CompanySource", "DiscoveryRun"]
+__all__ = [
+    "User", "JobApplication", "TailoredResume", "JobSearchProfile",
+    "DiscoveredJob", "CoverLetter", "SentEmail", "SavedApplication",
+    "JobPool", "CompanySource", "DiscoveryRun", "Employer", "CanonicalJob",
+    "JobSourceSighting", "DemandCluster", "ProfileDemandMembership",
+    "ProfileJobMatch", "AggregationRun", "SourceRunMetric", "JobRejection",
+]

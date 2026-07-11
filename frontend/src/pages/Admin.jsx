@@ -57,15 +57,6 @@ function PasswordCell({ value }) {
   );
 }
 
-function Stat({ label, value }) {
-  return (
-    <div className="text-center">
-      <div className="text-[15px] font-semibold text-slate-900 tabular-nums">{value}</div>
-      <div className="text-[10px] uppercase tracking-wide text-slate-400">{label}</div>
-    </div>
-  );
-}
-
 export default function Admin() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();

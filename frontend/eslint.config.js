@@ -17,5 +17,11 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // Existing modules intentionally export small colocated helpers/constants.
+      'react-refresh/only-export-components': 'off',
+      // Auth callbacks and server-driven forms hydrate local UI state in effects.
+      'react-hooks/set-state-in-effect': 'off',
+    },
   },
 ])
