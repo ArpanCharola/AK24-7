@@ -93,12 +93,18 @@ export const jobSearchesApi = {
 // returns DiscoveredJob-shaped rows enriched with match_score, match_explanation,
 // missing_skills, salary_lpa, notice_period.
 export const matchesApi = {
-  feed: ({ location, minScore, postedWithinDays, sort = "score" } = {}) =>
+  feed: ({ location, role, experience, source, minScore, workArrangement, postedWithinDays, freshness, sort = "score", limit } = {}) =>
     api.get("/matches/feed", {
       params: {
         ...(location ? { location } : {}),
+        ...(role ? { role } : {}),
+        ...(experience ? { experience } : {}),
+        ...(source ? { source } : {}),
         ...(minScore != null ? { min_score: minScore } : {}),
+        ...(workArrangement ? { work_arrangement: workArrangement } : {}),
         ...(postedWithinDays ? { posted_within_days: postedWithinDays } : {}),
+        ...(freshness ? { freshness } : {}),
+        ...(limit ? { limit } : {}),
         sort,
       },
     }),
@@ -139,11 +145,12 @@ export const dashboardApi = {
 };
 
 export const discoveredJobsApi = {
-  list: (status, postedWithinDays) =>
+  list: (status, postedWithinDays, targetId) =>
     api.get("/discovered-jobs", {
       params: {
         ...(status ? { status } : {}),
         ...(postedWithinDays ? { posted_within_days: postedWithinDays } : {}),
+        ...(targetId ? { target_id: targetId } : {}),
       },
     }),
   queue: (id) => api.post(`/discovered-jobs/${id}/queue`),
@@ -151,11 +158,12 @@ export const discoveredJobsApi = {
   skip: (id) => api.post(`/discovered-jobs/${id}/skip`),
   remove: (id) => api.delete(`/discovered-jobs/${id}`),
   bulkDelete: (ids) => api.post("/discovered-jobs/bulk-delete", { ids }),
-  export: (status, postedWithinDays) =>
+  export: (status, postedWithinDays, targetId) =>
     api.get("/discovered-jobs/export", {
       params: {
         ...(status ? { status } : {}),
         ...(postedWithinDays ? { posted_within_days: postedWithinDays } : {}),
+        ...(targetId ? { target_id: targetId } : {}),
       },
       responseType: "blob",
     }),
@@ -168,21 +176,27 @@ export const discoveredJobsApi = {
 // Public (unauthenticated) job pool — anyone can search/browse, only
 // logged-in users can import results into a profile feed.
 export const publicJobsApi = {
-  search: ({ role, location = "India", source, postedWithinDays = 7, pages = 5 }) =>
+  search: ({ role, location = "India", experience, workArrangement, source, postedWithinDays = 7, pages = 5 }) =>
     api.get("/public/job-search", {
       params: {
         role,
         location,
+        ...(experience ? { experience } : {}),
+        ...(workArrangement ? { work_arrangement: workArrangement } : {}),
         ...(source ? { source } : {}),
         ...(postedWithinDays ? { posted_within_days: postedWithinDays } : {}),
         pages,
       },
     }),
-  browse: ({ role, source, limit = 50, offset = 0 } = {}) =>
+  browse: ({ role, location, experience, workArrangement, source, postedWithinDays = 7, limit = 50, offset = 0 } = {}) =>
     api.get("/public/jobs", {
       params: {
         ...(role ? { role } : {}),
+        ...(location ? { location } : {}),
+        ...(experience ? { experience } : {}),
+        ...(workArrangement ? { work_arrangement: workArrangement } : {}),
         ...(source ? { source } : {}),
+        ...(postedWithinDays ? { posted_within_days: postedWithinDays } : {}),
         limit,
         offset,
       },

@@ -65,7 +65,7 @@ export default function SetCredentialsModal({ onDone }) {
               <button
                 type="button"
                 onClick={() => setShow((s) => !s)}
-                className="text-[11px] font-semibold text-violet-600 hover:text-violet-700 uppercase tracking-wider"
+                className="text-[11px] font-semibold text-brand hover:opacity-80 uppercase tracking-wider"
               >
                 {show ? "Hide" : "Show"}
               </button>

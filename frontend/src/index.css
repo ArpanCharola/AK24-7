@@ -671,3 +671,21 @@ h1, h2, h3, h4 { font-family: Fraunces, Georgia, serif; letter-spacing: -.02em; 
 
 /* Login is intentionally light-first and graphic, never WebGL-driven. */
 .login-page{background:#fbf7f0;color:#1c1b29;overflow:auto}.login-story{border-color:#e4dcc8;background:linear-gradient(145deg,#f1ead9 0%,#fbf7f0 58%,#edf5ef 100%)}.login-story:before{content:"AK";position:absolute;right:-5vw;bottom:-11vh;font:900 clamp(260px,35vw,580px)/.8 Fraunces,serif;color:rgba(15,91,69,.045);letter-spacing:-.12em}.login-story:after{content:"";position:absolute;left:52px;right:52px;top:108px;height:1px;background:#d8cfb9}.login-story-copy{max-width:620px}.login-story-copy h1{font-size:clamp(52px,5.5vw,82px)!important;line-height:.96!important;color:#1c1b29!important;margin:18px 0 28px}.login-story-copy h1 em{color:#0f5b45;font-weight:600}.login-story-copy p,.login-story-copy li{color:#5c5870!important}.login-story-copy ul{border-top:1px solid #d8cfb9;padding-top:24px}.login-form-side{background:#fbf7f0}.login-card{border-radius:12px;background:#fff!important;border:1px solid #e4dcc8!important;box-shadow:0 22px 60px rgba(40,34,20,.09)!important}.login-card h2{font-size:36px;color:#1c1b29!important}.login-card .text-slate-900{color:#1c1b29}.login-card .text-slate-700,.login-card .text-slate-600,.login-card .text-slate-500,.login-card .text-slate-400{color:#5c5870}.login-card .input-glass{background:#fbf7f0;color:#1c1b29;border-color:#e4dcc8}.login-card .btn-primary{background:#0f5b45;color:#fbf7f0}.login-page .public-footer{background:#fbf7f0;border-color:#e4dcc8}@media(max-width:1023px){.login-form-side{background:linear-gradient(145deg,#f1ead9,#fbf7f0)}}
+.ak247-foundation-marker { display: contents; }
+/* AK24/7 foundation v2: these semantic overrides win over legacy theme layers. */
+:root { --background:150 17% 96%; --foreground:219 38% 15%; --card:0 0% 100%; --card-foreground:219 38% 15%; --muted:150 16% 91%; --muted-foreground:218 17% 40%; --border:157 14% 82%; --input:157 14% 80%; --primary:159 54% 27%; --primary-foreground:0 0% 100%; --ring:159 54% 27%; --brand:159 54% 27%; --brand-2:207 55% 30%; --success:159 54% 27%; --warning:36 68% 39%; --danger:0 55% 42%; --info:207 55% 38%; --sidebar:151 19% 93%; --sidebar-border:157 14% 82%; --radius:.7rem; }
+.dark { --background:218 39% 9%; --foreground:210 35% 96%; --card:218 31% 14%; --card-foreground:210 35% 96%; --muted:218 23% 19%; --muted-foreground:215 20% 70%; --border:217 22% 27%; --input:217 22% 25%; --primary:207 76% 67%; --primary-foreground:218 39% 9%; --ring:207 76% 67%; --brand:207 76% 67%; --brand-2:161 55% 58%; --success:161 55% 58%; --warning:38 74% 62%; --danger:0 70% 69%; --info:207 76% 67%; --sidebar:218 34% 12%; --sidebar-border:217 22% 25%; }
+body { background-color:hsl(var(--background)); background-image:radial-gradient(hsl(var(--foreground) / .055) .55px,transparent .65px); background-size:9px 9px; }
+.dark body { background-image:radial-gradient(hsl(210 80% 85% / .045) .55px,transparent .7px),linear-gradient(135deg,hsl(218 39% 9%),hsl(222 38% 11%)); }
+.text-brand-gradient { background:none; -webkit-background-clip:initial; color:hsl(var(--brand)); }
+.btn-primary,.btn-gradient,.btn-success { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); box-shadow:0 1px 1px hsl(var(--foreground) / .12); }
+.btn-gradient:hover:not(:disabled),.btn-primary:hover:not(:disabled),.btn-success:hover:not(:disabled) { filter:brightness(1.08); box-shadow:0 5px 14px hsl(var(--primary) / .2); }
+.glass,.glass-subtle,.glass-strong { background:hsl(var(--card) / .96); border-color:hsl(var(--border)); box-shadow:0 1px 2px hsl(219 38% 15% / .05),0 10px 26px -20px hsl(219 38% 15% / .33); }
+.dark .glass,.dark .glass-subtle,.dark .glass-strong { box-shadow:0 12px 28px -20px #000a; }
+.sidebar-panel,.dark .sidebar-panel { background:hsl(var(--sidebar)); border-color:hsl(var(--sidebar-border)); box-shadow:none; }
+.editorial-nav { border-top:3px solid hsl(var(--brand)); background:hsl(var(--background) / .94); }
+.icon-button { background:hsl(var(--card)); }
+.app-shell { background:transparent; }
+.aurora-bg::before,.aurora-bg::after { display:none; }
+.app-main { display:flex; min-height:0; flex:1 1 auto; flex-direction:column; }
+.email-workspace { min-height:0; }

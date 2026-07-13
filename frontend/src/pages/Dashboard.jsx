@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { BriefcaseBusiness, Send, Target, ArrowRight } from "lucide-react";
+import { useEffect } from "react";
 import { authApi } from "../services/api";
 import { useDashboardStats } from "../hooks/useDashboard";
 import { useMatches } from "../hooks/useMatches";
@@ -18,6 +19,12 @@ export default function Dashboard() {
   const { data: me } = useQuery({ queryKey:["me"], queryFn:()=>authApi.me().then(r=>r.data), staleTime:300000 });
   const { data: stats } = useDashboardStats();
   const { data: matches = [] } = useMatches({ sort:"recent" });
+  useEffect(() => {
+    if (me?.is_admin) navigate("/admin", { replace: true });
+  }, [me?.is_admin, navigate]);
+  if (me?.is_admin) {
+    return null;
+  }
   const roles = stats?.target_roles || [];
   const recent = (Array.isArray(matches) ? matches : []).slice(0,6);
   const hour = new Date().getHours();

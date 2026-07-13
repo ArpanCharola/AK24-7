@@ -1,11 +1,11 @@
 import { senderName, timeAgo } from "../../lib/format";
 
 const KIND_BADGE = {
-  confirmed:  { label: "Applied",    cls: "bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-300" },
-  assessment: { label: "Assessment", cls: "bg-yellow-100 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300" },
-  interview:  { label: "Interview",  cls: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300" },
-  offer:      { label: "Offer",      cls: "bg-purple-100 text-purple-800 dark:bg-purple-500/20 dark:text-purple-300" },
-  rejected:   { label: "Rejected",   cls: "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300" },
+  confirmed:  { label: "Applied",    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" },
+  assessment: { label: "Assessment", cls: "bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-200" },
+  interview:  { label: "Interview",  cls: "bg-blue-100 text-blue-800 dark:bg-blue-400/15 dark:text-blue-200" },
+  offer:      { label: "Offer",      cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" },
+  rejected:   { label: "Rejected",   cls: "bg-slate-200 text-slate-700 dark:bg-slate-400/15 dark:text-slate-200" },
 };
 
 export default function EmailList({ messages, activeId, onSelect, loading }) {

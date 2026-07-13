@@ -16,8 +16,6 @@ export default function ComposeModal({ onClose }) {
     setGenerating(true);
     setNote(null);
     try {
-      // Backend AI drafter is context-driven; pass the user's intent as the
-      // message context and let it produce a professional outreach draft.
       const { data } = await emailApi.compose({
         purpose: "outreach",
         last_message: intent,
@@ -39,41 +37,33 @@ export default function ComposeModal({ onClose }) {
     try {
       await emailApi.send({ to, subject, body });
       onClose();
-    } catch (e) {
-      setNote(e?.response?.data?.detail || "Send failed — reconnect Gmail to grant send permission.");
+    } catch (error) {
+      setNote(error?.response?.data?.detail || "Send failed — reconnect Gmail to grant send permission.");
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end bg-black/30 backdrop-blur-sm sm:p-4">
-      <div className="glass-strong rounded-2xl w-full sm:w-[520px] flex flex-col max-h-[85vh]">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 backdrop-blur-sm sm:items-center sm:justify-end sm:p-4">
+      <div className="glass-strong flex max-h-[85vh] w-full flex-col rounded-2xl sm:w-[520px]">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
           <h3 className="text-sm font-semibold">New message</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Close compose window"><X size={16} /></button>
         </div>
-
-        <div className="flex flex-col gap-2 p-4 flex-1 overflow-y-auto">
-          <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To"
-                 className="w-full border-b border-border pb-2 text-[13px] bg-transparent outline-none text-foreground" />
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject"
-                 className="w-full border-b border-border pb-2 text-[13px] bg-transparent outline-none text-foreground" />
-
+        <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+          <input value={to} onChange={(event) => setTo(event.target.value)} placeholder="To" className="w-full border-b border-border bg-transparent pb-2 text-[13px] text-foreground outline-none" />
+          <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" className="w-full border-b border-border bg-transparent pb-2 text-[13px] text-foreground outline-none" />
           <div className="flex gap-2 pt-1">
-            <input value={intent} onChange={(e) => setIntent(e.target.value)} placeholder="What do you want to say?"
-                   className="flex-1 text-[12px] input-glass !py-2" />
-            <button onClick={generate} disabled={generating || !intent.trim()} className="btn-secondary !py-2 !px-3 text-[12px]">
+            <input value={intent} onChange={(event) => setIntent(event.target.value)} placeholder="What do you want to say?" className="input-glass flex-1 !py-2 text-[12px]" />
+            <button onClick={generate} disabled={generating || !intent.trim()} className="btn-secondary !px-3 !py-2 text-[12px]">
               <Sparkles size={12} /> {generating ? "…" : "Generate"}
             </button>
           </div>
-
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} placeholder="Write your email…"
-                    className="flex-1 text-[13px] input-glass resize-none" />
+          <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={8} placeholder="Write your email…" className="input-glass flex-1 resize-none text-[13px]" />
           {note && <p className="text-[12px] text-danger">{note}</p>}
         </div>
-
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-border shrink-0">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
           <button onClick={onClose} className="btn-secondary text-[13px]">Discard</button>
           <button onClick={send} disabled={sending || !to.trim() || !body.trim()} className="btn-primary text-[13px]">
             <Send size={14} /> {sending ? "Sending…" : "Send"}

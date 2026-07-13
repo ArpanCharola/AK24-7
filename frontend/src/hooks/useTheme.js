@@ -1,21 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 export function useTheme() {
-  const [dark, setDark] = useState(() => {
-    const stored = localStorage.getItem("editorial-theme");
-    if (stored) return stored === "dark";
-    return false;
-  });
-
   useEffect(() => {
-    const root = document.documentElement;
-    if (dark) {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-    localStorage.setItem("editorial-theme", dark ? "dark" : "light");
-  }, [dark]);
+    document.documentElement.classList.remove("dark");
+    localStorage.setItem("theme", "light");
+    localStorage.setItem("editorial-theme", "light");
+  }, []);
 
-  return { dark, toggle: () => setDark((d) => !d) };
+  return { dark: false, toggle: () => {} };
 }

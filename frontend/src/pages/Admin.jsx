@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi, authApi } from "../services/api";
 import AdminUserDrawer from "../components/AdminUserDrawer";
+import { AnalyticsOverview, JobWarehouse, SourceRuns } from "../components/AdminAnalytics";
 
 function RoleBadge({ isAdmin }) {
   return (
@@ -80,6 +81,7 @@ export default function Admin() {
   });
 
   const [openId, setOpenId] = useState(null);
+  const [tab, setTab] = useState("overview");
 
   const del = useMutation({
     mutationFn: (id) => adminApi.deleteUser(id),
@@ -104,8 +106,13 @@ export default function Admin() {
 
   const users = data?.users || [];
 
+  if (tab === "overview") return <div className="page-wrap admin-shell"><AdminTabs tab={tab} setTab={setTab}/><AnalyticsOverview /></div>;
+  if (tab === "jobs") return <div className="page-wrap admin-shell"><AdminTabs tab={tab} setTab={setTab}/><JobWarehouse /></div>;
+  if (tab === "runs") return <div className="page-wrap admin-shell"><AdminTabs tab={tab} setTab={setTab}/><SourceRuns /></div>;
+
   return (
-    <div className="p-6 lg:p-8 max-w-[1400px] mx-auto">
+    <div className="p-6 lg:p-8 max-w-[1400px] mx-auto admin-shell">
+      <AdminTabs tab={tab} setTab={setTab}/>
       <div className="flex items-end justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Admin · Users</h1>
@@ -223,4 +230,12 @@ export default function Admin() {
       )}
     </div>
   );
+}
+
+function AdminTabs({ tab, setTab }) {
+  return <nav className="admin-tabs" aria-label="Admin sections">
+    {[['overview','Overview'],['jobs','All jobs'],['runs','Sources & runs'],['users','Users']].map(([id,label]) =>
+      <button key={id} onClick={() => setTab(id)} className={tab === id ? 'active' : ''}>{label}</button>
+    )}
+  </nav>;
 }

@@ -1,4 +1,4 @@
-import { MapPin, Briefcase, ExternalLink, Clock, Zap } from "lucide-react";
+import { MapPin, Briefcase, ExternalLink, Clock, Zap, Trash2 } from "lucide-react";
 import { timeAgo, salaryLabel } from "../../lib/format";
 
 function MatchBadge({ score }) {
@@ -21,7 +21,7 @@ function LogoAvatar({ name }) {
 
 // Elevated, Jobright-style match card. Match score renders only when real
 // (match_score != null) — never a placeholder.
-export default function JobMatchCard({ job }) {
+export default function JobMatchCard({ job, onRemove, removing = false }) {
   const salary = salaryLabel(job);
 
   function apply() {
@@ -64,6 +64,17 @@ export default function JobMatchCard({ job }) {
           </button>
         ) : (
           <span className="text-[11.5px] text-muted-foreground py-1.5">No application link</span>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={() => onRemove(job)}
+            disabled={removing}
+            className="btn-secondary !py-1.5 !px-2 text-[12px]"
+            aria-label={`Remove ${job.title || "job"}`}
+          >
+            <Trash2 size={13} />
+          </button>
         )}
       </div>
     </article>

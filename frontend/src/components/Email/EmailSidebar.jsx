@@ -21,7 +21,7 @@ export default function EmailSidebar({ active, onSelect, userLabels = [], onComp
     }`;
 
   return (
-    <aside className="w-52 shrink-0 flex flex-col border-r border-border bg-sidebar/60 h-full overflow-y-auto">
+    <aside className="hidden h-full w-56 shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar/60 lg:flex">
       <div className="p-3">
         <button onClick={onCompose} className="btn-gradient w-full !rounded-full !py-2.5 text-[13px]">
           <PenLine size={15} /> Compose
