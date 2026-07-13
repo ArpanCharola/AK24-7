@@ -1,9 +1,9 @@
 """APScheduler — lightweight in-process cron (replaces Celery Beat for the lean
 100-user build). Runs periodic discovery + the daily digest.
 
-Gated behind settings.ENABLE_SCHEDULER (default False) so it stays off until the
-discovery/matching streams (A1/A2) land. Job bodies lazily import those modules, so
-a not-yet-built entrypoint never breaks app startup — it just logs and skips.
+Gated behind settings.ENABLE_SCHEDULER so replica processes can opt out. The
+scheduler-owning API process runs shared warehouse aggregation, while job bodies
+still lazily import optional modules so startup remains resilient.
 """
 import logging
 
@@ -62,6 +62,32 @@ async def _run_pool_warm() -> None:
         logger.error("pool warm error: %s", repr(e)[:200])
 
 
+async def _run_shared_aggregation() -> None:
+    """Run the warehouse once for all active demand clusters, never per user."""
+    try:
+        from app.services.aggregation import run_aggregation
+        await run_aggregation(trigger="scheduled")
+    except Exception as e:  # noqa: BLE001
+        logger.error("shared aggregation error: %s", repr(e)[:200])
+
+
+async def _run_entry_level_supply() -> None:
+    """Refresh broad fresher/entry-level India tech jobs into JobPool."""
+    try:
+        from app.services.entry_level_supply import backfill_entry_level_supply
+        await backfill_entry_level_supply(posted_within_days=7, use_stealth=False)
+    except Exception as e:  # noqa: BLE001
+        logger.error("entry-level supply error: %s", repr(e)[:200])
+
+
+async def _cleanup_warehouse() -> None:
+    try:
+        from app.services.aggregation import cleanup_warehouse
+        await cleanup_warehouse()
+    except Exception as e:  # noqa: BLE001
+        logger.error("warehouse cleanup error: %s", repr(e)[:200])
+
+
 async def _run_slug_revalidation() -> None:
     """Re-probe registry slugs; refresh india_roles_count, prune dead with hysteresis."""
     try:
@@ -79,11 +105,12 @@ def start_scheduler() -> None:
         return
     if scheduler.running:
         return
-    # Freshness-biased cadence (IST): general pool warm + per-profile discovery
-    # every 3h so 24h/7d jobs surface fast; registry revalidation off-peak at 03:00;
-    # digest 07:30.
-    # Shared aggregation is owned by the single Celery Beat process. Do not
-    # schedule it in API workers: every worker would otherwise duplicate work.
+    # The web deployment is intentionally a single worker. Keep one shared
+    # warehouse refresh at 00:37 and 12:37 IST, rather than fanning out a
+    # scrape for each profile. ``run_aggregation`` also guards an active run.
+    scheduler.add_job(_run_entry_level_supply, CronTrigger(hour="2,14", minute=17), id="entry_level_supply", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(_run_shared_aggregation, CronTrigger(hour="0,12", minute=37), id="warehouse_aggregation", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(_cleanup_warehouse, CronTrigger(hour=1, minute=47), id="warehouse_cleanup", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(_run_slug_revalidation, CronTrigger(hour=3, minute=0), id="slug_revalidate", replace_existing=True)
     scheduler.add_job(_run_daily_digest, CronTrigger(hour=7, minute=30), id="digest", replace_existing=True)
     scheduler.start()

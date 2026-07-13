@@ -15,6 +15,8 @@ from enum import StrEnum
 from typing import Any, Iterable, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from app.services.india_locations import is_foreign_only
+
 
 _TRACKING_KEYS = {
     "fbclid", "gclid", "msclkid", "ref", "referrer", "source", "trk",
@@ -117,7 +119,7 @@ def normalize_job_url(url: str) -> str:
 
 
 def _words(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9+#.]+", (value or "").casefold()))
+    return " ".join(re.findall(r"[a-z0-9+#]+", (value or "").casefold()))
 
 
 def normalize_employer(name: str) -> str:
@@ -161,7 +163,7 @@ def classify_rejection(
     if _JOB_BOARD_RE.fullmatch(normalize_employer(employer)):
         return Rejection(RejectionReason.JOB_BOARD_EMPLOYER, "job board cannot be the hiring employer")
     location = str(job.get("location") or "").strip()
-    if location and _FOREIGN_ONLY_RE.search(location) and not _INDIA_OR_GLOBAL_RE.search(location):
+    if is_foreign_only(location):
         return Rejection(RejectionReason.FOREIGN_ONLY, "role is not open to India")
     return None
 

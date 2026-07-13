@@ -1,4 +1,3 @@
-import io
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -10,6 +9,8 @@ from app.core.auth import get_current_user
 from app.models.user import User
 from app.services.resume_parser import (
     PROFILE_SECTIONS,
+    empty_profile,
+    extract_text_from_upload,
     load_structured_profile,
     parse_resume_file,
 )
@@ -38,6 +39,7 @@ class ProfileResponse(BaseModel):
     experience_years: int | None = None
     experience_months: int | None = None
     preferred_locations: list[str] = []
+    desired_roles: str | None = None
     # Structured base profile (drives tailoring + the profile editor)
     summary: str | None = None
     work_experience: list[dict] = []
@@ -61,6 +63,7 @@ class ProfileUpdate(BaseModel):
     experience_years: int | None = None
     experience_months: int | None = None
     preferred_locations: list[str] | None = None
+    desired_roles: str | None = None
     # Structured base profile
     summary: str | None = None
     work_experience: list[dict] | None = None
@@ -74,7 +77,7 @@ class ProfileUpdate(BaseModel):
 _SCALAR_FIELDS = (
     "full_name", "phone", "location", "linkedin_url", "github_url", "website_url",
     "portal_email", "portal_password", "auto_apply_enabled", "daily_auto_apply_cap",
-    "experience_years", "experience_months",
+    "experience_years", "experience_months", "desired_roles",
 )
 
 
@@ -109,6 +112,7 @@ def _profile_response(user: User) -> ProfileResponse:
         experience_years=user.experience_years,
         experience_months=user.experience_months,
         preferred_locations=_parse_locations(user.preferred_locations),
+        desired_roles=user.desired_roles,
         summary=structured["summary"] or None,
         work_experience=structured["work_experience"],
         education=structured["education"],
@@ -178,24 +182,27 @@ async def import_resume(
     draft = await parse_resume_file(file.filename, data)
 
     resume_text = draft.get("resume_text") or ""
+    parse_warning = None
     if not resume_text:
-        raise HTTPException(status_code=422, detail="No readable text found in the file")
+        parse_warning = (
+            "We could not extract readable text from this resume. "
+            "If it is scanned, OCR will be used when available; please fill the details manually."
+        )
+        draft = empty_profile()
+        draft["resume_text"] = ""
 
-    current_user.resume_text = resume_text
+    current_user.resume_text = resume_text or "Resume uploaded; manual profile details required."
     await db.commit()
 
-    return {"draft": draft, "char_count": len(resume_text)}
-
-
-def _extract_pdf_text(data: bytes) -> str:
-    from pypdf import PdfReader
-    reader = PdfReader(io.BytesIO(data))
-    pages = []
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        if text.strip():
-            pages.append(text)
-    return "\n\n".join(pages).strip()
+    contact = draft.get("contact") or {}
+    flat = {
+        **draft,
+        "full_name": contact.get("full_name"),
+        "phone": contact.get("phone"),
+        "skills": draft.get("skills") or [],
+        "desired_roles": draft.get("desired_roles") or [],
+    }
+    return {"draft": flat, "char_count": len(resume_text), "warning": parse_warning}
 
 
 @router.post("/profile/upload-resume")
@@ -204,21 +211,19 @@ async def upload_resume(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Accept a PDF resume, extract its text, and save it to the user profile."""
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    """Accept a PDF/DOCX resume, extract its text, and save it to the user profile."""
+    name = file.filename or ""
+    if not name.lower().endswith((".pdf", ".docx")):
+        raise HTTPException(status_code=400, detail="Only PDF or DOCX files are accepted")
 
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:  # 10 MB guard
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
 
-    try:
-        text = _extract_pdf_text(data)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}") from exc
+    text = extract_text_from_upload(name, data)
 
     if not text:
-        raise HTTPException(status_code=422, detail="No readable text found in PDF")
+        raise HTTPException(status_code=422, detail="No readable text found in the file")
 
     current_user.resume_text = text
     await db.commit()
@@ -238,10 +243,7 @@ async def parse_pdf(
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
 
-    try:
-        text = _extract_pdf_text(data)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}") from exc
+    text = extract_text_from_upload(file.filename, data)
 
     if not text:
         raise HTTPException(status_code=422, detail="No readable text found in PDF")

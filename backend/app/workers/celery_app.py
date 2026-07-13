@@ -37,11 +37,9 @@ celery_app.conf.update(
     # Cap broker memory growth — Redis evicts the oldest under maxmemory anyway.
     broker_transport_options={"visibility_timeout": 15 * 60},
     beat_schedule={
-        # 00:37 and 12:37 IST (Celery uses UTC).
-        "aggregate-job-warehouse-twice-daily": {
-            "task": "aggregate_job_warehouse",
-            "schedule": crontab(minute=7, hour="7,19"),
-        },
+        # APScheduler in the single web process owns warehouse cadence. The
+        # Celery aggregation tasks remain callable for operations, but Beat
+        # must not create duplicate source traffic.
         # Discovery is user-triggered only (Job Preferences → Run profile).
         # The scheduled task remains registered so it can be invoked manually
         # via `celery call scheduled_discovery` if needed.
@@ -58,9 +56,5 @@ celery_app.conf.update(
         },
         # Job-pool TTL — drop rows we haven't re-seen for 24h. Pool is meant
         # as a short-lived shared cache, not a permanent index.
-        "cleanup-job-warehouse-daily": {
-            "task": "cleanup_job_warehouse",
-            "schedule": crontab(minute=17, hour=20),  # 01:47 IST
-        },
     },
 )

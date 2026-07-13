@@ -11,7 +11,7 @@ Flow:
        the user's DiscoveredJobs.
 
 Constraints honored (re-using existing helpers from job_discovery_agent):
-  - USA-only locations
+  - India-only locations
   - No internships / part-time / staffing / gov
   - Work-arrangement detection
   - Role synonym expansion via _matches_criteria
@@ -24,17 +24,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlsplit
 
 import httpx
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, func
+from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -44,6 +45,13 @@ from app.models.discovered_job import DiscoveredJob
 from app.models.job_pool import JobPool
 from app.models.job_search_profile import JobSearchProfile
 from app.models.user import User
+from app.services.experience_filters import (
+    FRESHER_TERMS,
+    ROLE_QUERY_ALIASES,
+    fresher_search_roles,
+    is_experience_match,
+    normalize_experience,
+)
 from app.services.serpapi_jobs import search_serpapi_jobs
 
 logger = logging.getLogger(__name__)
@@ -248,15 +256,186 @@ class PublicJobResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("title", "company", "location", mode="before")
+    @classmethod
+    def _repair_mojibake(cls, value):
+        if not isinstance(value, str):
+            return value
+        if not any(marker in value for marker in ("â", "Ã", "Â")):
+            return value
+        try:
+            return value.encode("latin1").decode("utf-8")
+        except UnicodeError:
+            return value
+
 
 class PublicSearchResponse(BaseModel):
     query: str
     location: str
     source_filter: Optional[str]
+    experience_filter: Optional[str] = None
+    work_arrangement_filter: Optional[str] = None
     fetched: int           # raw rows SerpAPI returned (before our filters)
     matched: int           # rows kept after USA / source / exclusion filters
     saved: int             # rows actually upserted into JobPool
     jobs: list[PublicJobResponse]
+
+
+async def _matching_pool_rows(
+    db: AsyncSession,
+    *,
+    role: str | None,
+    location: str | None,
+    experience_filter: str | None,
+    work_filter: str | None,
+    source: str | None = None,
+    posted_within_days: int | None = 7,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[JobPool]:
+    """Fast DB-backed matches with synonym-aware role filtering."""
+    from app.agents.job_discovery_agent import (
+        _is_excluded_job,
+        _is_india_strict,
+        _matches_criteria,
+    )
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=posted_within_days or 7)
+    q = select(JobPool).where(JobPool.last_seen_at >= cutoff)
+    if source:
+        q = q.where(JobPool.source == source)
+    if work_filter:
+        q = q.where(func.lower(JobPool.work_arrangement) == work_filter)
+    if location and location.strip().lower() not in {"india", "all india", "pan india"}:
+        loc = location.strip().lower()
+        q = q.where(or_(
+            func.lower(JobPool.location).contains(loc),
+            func.lower(JobPool.location).contains("remote india"),
+            func.lower(JobPool.location).contains("pan india"),
+            func.lower(JobPool.location).contains("pan-india"),
+            func.lower(JobPool.location).contains("anywhere in india"),
+        ))
+
+    fetch_limit = min(1500, max(limit * 8, limit + offset + 200))
+    rows = (await db.execute(
+        q.order_by(JobPool.last_seen_at.desc()).limit(fetch_limit)
+    )).scalars().all()
+
+    profile_dict = {"target_roles": role or ""}
+    out: list[JobPool] = []
+    seen: set[str] = set()
+    seen_content: set[tuple[str, str]] = set()
+    for row in rows:
+        key = row.job_url or f"{row.company}-{row.title}-{row.location}"
+        if key in seen:
+            continue
+        seen.add(key)
+        content_key = _content_key(row.company, row.title)
+        if content_key and content_key in seen_content:
+            continue
+        if content_key:
+            seen_content.add(content_key)
+        if role and not _matches_criteria(row.title or "", profile_dict):
+            continue
+        if not _is_india_strict(row.location):
+            continue
+        if _is_excluded_job(row.title or "", row.company or "", row.job_url, row.job_description or ""):
+            continue
+        if not is_experience_match(row.title, row.job_description, experience_filter):
+            continue
+        out.append(row)
+    ranked = _rank_pool_rows(out, role=role, experience_filter=experience_filter)
+    return ranked[offset:offset + limit]
+
+
+def _content_key(company: str | None, title: str | None) -> tuple[str, str] | None:
+    c = re.sub(r"[^a-z0-9]", "", (company or "").lower())
+    t = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]", " ", (title or "").lower())).strip()
+    return (c, t) if c and t else None
+
+
+def _row_quality_score(row: JobPool, *, role: str | None, experience_filter: str | None) -> float:
+    title = (row.title or "").lower()
+    company = (row.company or "").lower()
+    url = (row.job_url or "").lower()
+    description = (row.job_description or "").lower()
+    score = 0.0
+
+    if role:
+        role_key = role.lower().strip()
+        aliases = ROLE_QUERY_ALIASES.get(role_key, [role])
+        alias_lows = [alias.lower() for alias in aliases]
+        if any(alias in title for alias in alias_lows):
+            score += 35
+        if role_key in title:
+            score += 12
+        if role_key.replace("developer", "engineer") in title:
+            score += 5
+
+    if normalize_experience(experience_filter) == "fresher":
+        combined = f"{title} {description}"
+        if any(term in combined for term in FRESHER_TERMS):
+            score += 14
+        if any(term in title for term in ("junior", "entry", "fresher", "graduate", "trainee", "associate")):
+            score += 8
+
+    source_weight = {
+        "greenhouse": 13,
+        "lever": 13,
+        "ashby": 13,
+        "workday": 11,
+        "company_site": 10,
+        "instahyre": 9,
+        "linkedin": 8,
+        "indeed": 7,
+        "google_jobs": 6,
+    }
+    score += source_weight.get((row.source or "").lower(), 4)
+
+    posted = row.posted_at
+    if posted:
+        if posted.tzinfo is None:
+            posted = posted.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - posted).total_seconds() / 86400
+        if age_days <= 1:
+            score += 12
+        elif age_days <= 3:
+            score += 8
+        elif age_days <= 7:
+            score += 4
+
+    if re.search(r"\b(seo|digital marketing|wordpress designer|data analyst)\b", title):
+        score -= 14
+    if "javabykiran" in url or "placements/latest-job-opening" in url or "training" in company:
+        score -= 18
+    if title.count("/") + title.count(",") >= 2:
+        score -= 5
+
+    return score
+
+
+def _rank_pool_rows(rows: list[JobPool], *, role: str | None, experience_filter: str | None) -> list[JobPool]:
+    ranked = sorted(
+        rows,
+        key=lambda row: (
+            _row_quality_score(row, role=role, experience_filter=experience_filter),
+            row.posted_at or row.last_seen_at,
+            row.last_seen_at,
+        ),
+        reverse=True,
+    )
+    unique_company: list[JobPool] = []
+    overflow: list[JobPool] = []
+    companies: set[str] = set()
+    for row in ranked:
+        company_key = re.sub(r"[^a-z0-9]", "", (row.company or "").lower())
+        if company_key and company_key in companies:
+            overflow.append(row)
+            continue
+        if company_key:
+            companies.add(company_key)
+        unique_company.append(row)
+    return unique_company + overflow
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -265,11 +444,13 @@ class PublicSearchResponse(BaseModel):
 async def public_search(
     request: Request,
     role: str = Query(..., min_length=2, max_length=120, description="e.g. 'Software Engineer'"),
-    location: str = Query("United States", max_length=120),
+    location: str = Query("India", max_length=120),
     source: Optional[str] = Query(
         None,
         description="Restrict results to a single ATS — greenhouse | lever | ashby | workday | icims | smartrecruiters | bamboohr",
     ),
+    experience: Optional[str] = Query(None, description="fresher | junior | mid | senior"),
+    work_arrangement: Optional[str] = Query(None, description="remote | hybrid | onsite"),
     posted_within_days: Optional[int] = Query(7, ge=1, le=60),
     pages: int = Query(
         5, ge=1, le=10,
@@ -281,34 +462,82 @@ async def public_search(
     hosts, upserts into the shared JobPool, returns the rows it just saved."""
     await _rate_limit(_client_ip(request), "search", max_calls=10, window_sec=60)
 
+    experience_filter = normalize_experience(experience)
+    work_filter = (work_arrangement or "").strip().lower() or None
+    if work_filter not in {"remote", "hybrid", "onsite", None}:
+        work_filter = None
+    search_roles = (fresher_search_roles(role, experience_filter) or [role.strip()])[:5]
+
     profile_for_serpapi = {
         "target_roles": role,
         "locations": location,
         "posted_within_days": posted_within_days,
     }
+    cached_rows = await _matching_pool_rows(
+        db,
+        role=role,
+        location=location,
+        experience_filter=experience_filter,
+        work_filter=work_filter,
+        source=source,
+        posted_within_days=posted_within_days,
+        limit=50,
+    )
+    # Search should never feel frozen when we already have valid warehouse rows.
+    # Background supply/backfill is responsible for growing volume; the user's
+    # click should return the current best set immediately instead of waiting on
+    # live portals that may be blocked or slow.
+    if cached_rows:
+        return PublicSearchResponse(
+            query=role,
+            location=location,
+            source_filter=source,
+            experience_filter=experience_filter,
+            work_arrangement_filter=work_filter,
+            fetched=0,
+            matched=0,
+            saved=0,
+            jobs=[PublicJobResponse.model_validate(r) for r in cached_rows],
+        )
 
     # Run SerpAPI (broad aggregator) and direct ATS API scrapes (Greenhouse +
     # Ashby) IN PARALLEL. The ATS scrapes return direct ATS URLs — the kind
     # SerpAPI almost never surfaces. quick_ats_search caps at ~3-5s.
-    # Re-use the same USA / job-type filters the authed discovery uses so
+    # Re-use the same India / job-type filters the authed discovery uses so
     # the pool holds the same quality bar.
     from app.agents.job_discovery_agent import (
         quick_ats_search,
-        _is_usa_location,
+        _is_india_strict,
         _is_excluded_job,
+        _matches_criteria,
     )
 
+    per_query_pages = max(1, min(pages, (pages + max(len(search_roles), 1) - 1) // max(len(search_roles), 1)))
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        serpapi_task = search_serpapi_jobs(
-            client, profile_for_serpapi, posted_within_days, max_pages=pages,
-        )
-        ats_task = quick_ats_search(role, posted_within_days)
+        serpapi_tasks = [
+            search_serpapi_jobs(
+                client,
+                {**profile_for_serpapi, "search_query": search_role},
+                posted_within_days,
+                max_pages=per_query_pages,
+            )
+            for search_role in search_roles
+        ]
+        ats_tasks = [quick_ats_search(role, posted_within_days)]
         # return_exceptions so a failure in one source never discards the other's
         # results (e.g. a SerpAPI hiccup must not throw away the ATS scrape).
-        results = await asyncio.gather(serpapi_task, ats_task, return_exceptions=True)
-        raw_serpapi = results[0] if isinstance(results[0], list) else []
-        ats_jobs = results[1] if isinstance(results[1], list) else []
-        for label, r in zip(("serpapi", "ats"), results):
+        results = await asyncio.gather(*serpapi_tasks, *ats_tasks, return_exceptions=True)
+        raw_serpapi: list[dict] = []
+        ats_jobs: list[dict] = []
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                continue
+            if idx < len(serpapi_tasks):
+                raw_serpapi.extend(result)
+            else:
+                ats_jobs.extend(result)
+        labels = [f"serpapi:{item}" for item in search_roles] + [f"ats:{role}"]
+        for label, r in zip(labels, results):
             if isinstance(r, Exception):
                 logger.warning("Public search %s source failed: %s", label, r)
 
@@ -337,13 +566,15 @@ async def public_search(
         matched.append(j)
 
     # ── Quality filters (same as the authed discovery flow) ────────────────
-    # USA-only + drop internships / part-time / staffing / .gov before the
+    # India-only + drop internships / part-time / staffing before the
     # rows hit the pool. Saves on storage + every browse downstream.
     before_filters = len(matched)
     matched = [
         j for j in matched
-        if _is_usa_location(j.get("location"))
+        if _is_india_strict(j.get("location"))
         and not _is_excluded_job(j.get("title", ""), j.get("company", ""), j.get("job_url", ""))
+        and is_experience_match(j.get("title"), j.get("job_description"), experience_filter)
+        and (not work_filter or (j.get("work_arrangement") or "").lower() == work_filter)
     ]
     dropped_by_filters = before_filters - len(matched)
 
@@ -413,22 +644,39 @@ async def public_search(
     for row in saved_objs:
         await db.refresh(row)
 
+    response_rows = await _matching_pool_rows(
+        db,
+        role=role,
+        location=location,
+        experience_filter=experience_filter,
+        work_filter=work_filter,
+        source=source,
+        posted_within_days=posted_within_days,
+        limit=100,
+    )
+
     return PublicSearchResponse(
         query=role,
         location=location,
         source_filter=source,
+        experience_filter=experience_filter,
+        work_arrangement_filter=work_filter,
         fetched=len(raw_jobs),
         matched=len(matched),
         saved=len(saved_objs),
-        jobs=[PublicJobResponse.model_validate(r) for r in saved_objs],
+        jobs=[PublicJobResponse.model_validate(r) for r in response_rows],
     )
 
 
 @router.get("/jobs", response_model=list[PublicJobResponse])
 async def browse_pool(
     request: Request,
-    role: Optional[str] = Query(None, max_length=120, description="Substring match on title"),
+    role: Optional[str] = Query(None, max_length=120, description="Synonym-aware role match on title"),
+    location: Optional[str] = Query(None, max_length=120),
+    experience: Optional[str] = Query(None, description="fresher | junior | mid | senior"),
+    work_arrangement: Optional[str] = Query(None, description="remote | hybrid | onsite"),
     source: Optional[str] = Query(None),
+    posted_within_days: Optional[int] = Query(7, ge=1, le=60),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -441,17 +689,22 @@ async def browse_pool(
     """
     await _rate_limit(_client_ip(request), "browse", max_calls=60, window_sec=60)
 
-    from datetime import timedelta
-    fresh_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-
-    q = select(JobPool).where(JobPool.last_seen_at >= fresh_cutoff)
-    if role:
-        q = q.where(func.lower(JobPool.title).contains(role.lower()))
-    if source:
-        q = q.where(JobPool.source == source)
-    q = q.order_by(JobPool.last_seen_at.desc()).limit(limit).offset(offset)
-    rows = await db.execute(q)
-    return [PublicJobResponse.model_validate(r) for r in rows.scalars().all()]
+    experience_filter = normalize_experience(experience)
+    work_filter = (work_arrangement or "").strip().lower() or None
+    if work_filter not in {"remote", "hybrid", "onsite", None}:
+        work_filter = None
+    rows = await _matching_pool_rows(
+        db,
+        role=role,
+        location=location,
+        experience_filter=experience_filter,
+        work_filter=work_filter,
+        source=source,
+        posted_within_days=posted_within_days,
+        limit=limit,
+        offset=offset,
+    )
+    return [PublicJobResponse.model_validate(r) for r in rows]
 
 
 # ── Import to a user's profile ───────────────────────────────────────────────
@@ -465,7 +718,7 @@ class ImportResponse(BaseModel):
     requested: int
     imported: int        # new DiscoveredJob rows created
     already_present: int # job_url already in this user's DiscoveredJobs
-    skipped_filters: int # failed USA / role-match / exclusion filter
+    skipped_filters: int # failed India / role-match / exclusion filter
 
 
 @router.post("/import-to-profile/{profile_id}", response_model=ImportResponse)
@@ -476,7 +729,7 @@ async def import_to_profile(
     db: AsyncSession = Depends(get_db),
 ):
     """Import selected pool jobs into the user's DiscoveredJobs feed, filtered
-    against the named JobSearchProfile (role match, USA, no internships, etc).
+    against the named JobSearchProfile (role match, India, no internships, etc).
 
     Scoring is NOT done here — the regular scoring pass on next discovery run
     will pick these up. This keeps import cheap and deterministic.
@@ -484,7 +737,7 @@ async def import_to_profile(
     # Lazy import to avoid pulling discovery dependencies into module load.
     from app.agents.job_discovery_agent import (
         _matches_criteria,
-        _is_usa_location,
+        _is_india_strict,
         _is_excluded_job,
     )
 
@@ -532,7 +785,7 @@ async def import_to_profile(
         if not _matches_criteria(p.title or "", profile_dict):
             skipped_filters += 1
             continue
-        if not _is_usa_location(p.location):
+        if not _is_india_strict(p.location):
             skipped_filters += 1
             continue
         if _is_excluded_job(p.title or "", p.company or "", p.job_url):

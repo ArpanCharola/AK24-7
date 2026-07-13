@@ -18,6 +18,13 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.services.india_locations import (
+    is_india_or_remote_location,
+    is_remote_india,
+    location_matches_preference,
+    normalize_india_location,
+)
+
 logger = logging.getLogger(__name__)
 
 _SLUGS_PATH = Path(__file__).parent.parent / "data" / "india_company_slugs.json"
@@ -89,26 +96,11 @@ def _is_india_strict(location: str | None) -> bool:
     onsite AND empty/unknown locations are DROPPED — high preference to India.
     Use this for the user-facing feed/pool; _is_india_location stays lenient for
     slug discovery where empty often means an India employer omitted the field."""
-    if not location or not location.strip():
-        return False
-    low = f" {location.strip().lower()} "
-    if any(tok in low for tok in _INDIA_TOKENS):
-        return True
-    if any(tok in low for tok in _GLOBAL_REMOTE):
-        return True
-    return False
+    return is_india_or_remote_location(location, allow_named_city=True)
 
 
 def _normalize_india_location(location: str | None) -> str | None:
-    if not location:
-        return location
-    cleaned = " ".join(location.split())
-    low = cleaned.lower()
-    for raw, canon in _CITY_CANON.items():
-        if re.search(r"\b" + re.escape(raw) + r"\b", low):
-            cleaned = re.sub(r"\b" + re.escape(raw) + r"\b", canon, cleaned, flags=re.IGNORECASE)
-            low = cleaned.lower()
-    return cleaned
+    return normalize_india_location(location)
 
 
 # ── Salary (LPA) parsing ──────────────────────────────────────────────────────
@@ -197,6 +189,11 @@ _EXCLUDED_TITLE_RE = re.compile(
     r"part[\s-]?time|freelance|volunteer)\b",
     re.IGNORECASE,
 )
+_LOW_QUALITY_TITLE_RE = re.compile(
+    r"\b(training|course|courses|bootcamp|classes|certification|certifications)\b|"
+    r"real[\s-]?time projects?|placement guarantee|online training",
+    re.IGNORECASE,
+)
 
 # Indian + global staffing / RPO / consultancy firms and generic markers.
 _STAFFING_RE = re.compile(
@@ -205,7 +202,7 @@ _STAFFING_RE = re.compile(
     r"teamlease|quess|quesscorp|randstad|adecco|manpowergroup|abc\s+consultants|"
     r"ikya|kelly\s+services?|gi\s+group|ciel\s+hr|ma\s+foi|careernet|xpheno|"
     r"aptech|vsplash|magna\s+infotech|spectraforce|collabera|"
-    r"robert\s+half|kforce|insight\s+global|apex\s+systems)\b",
+    r"jobs?\s+opportunit(y|ies)|robert\s+half|kforce|insight\s+global|apex\s+systems)\b",
     re.IGNORECASE,
 )
 # Description heuristics: third-party hiring on behalf of an undisclosed client.
@@ -219,6 +216,8 @@ _STAFFING_DESC_RE = re.compile(
 
 def _is_excluded_job(title: str, company: str, job_url: str = "", description: str = "") -> bool:
     if _EXCLUDED_TITLE_RE.search(title or ""):
+        return True
+    if _LOW_QUALITY_TITLE_RE.search(title or ""):
         return True
     if _STAFFING_RE.search(company or ""):
         return True
@@ -333,6 +332,7 @@ _ROLE_EXPANSIONS: list[tuple[re.Pattern, list[str]]] = []
 _RAW_SYNONYMS = [
     (r"\bML\b", ["Machine Learning"]),
     (r"\bAI\b", ["Artificial Intelligence"]),
+    (r"\bAI/ML\b", ["AI ML", "Artificial Intelligence", "Machine Learning", "Machine Learning Engineer", "AI Engineer"]),
     (r"\bSWE\b", ["Software Engineer", "Software Developer", "Software Development Engineer"]),
     (r"\bSDE\b", ["Software Development Engineer", "Software Engineer"]),
     (r"\bSDET\b", ["Software Development Engineer in Test", "Software Engineer in Test"]),
@@ -343,14 +343,15 @@ _RAW_SYNONYMS = [
     (r"\bPM\b", ["Product Manager"]),
     (r"\bFE\b", ["Frontend Engineer", "Front-End Engineer"]),
     (r"\bBE\b", ["Backend Engineer", "Back-End Engineer"]),
-    (r"\bFront[\s-]End\b", ["Frontend"]),
-    (r"\bBack[\s-]End\b", ["Backend"]),
-    (r"\bFull[\s-]Stack\b", ["Fullstack"]),
+    (r"\bFront[\s-]?End\b", ["Frontend", "Front End", "Frontend Engineer", "Frontend Developer"]),
+    (r"\bBack[\s-]?End\b", ["Backend", "Back End", "Backend Engineer", "Backend Developer"]),
+    (r"\bFull[\s-]?Stack\b", ["Fullstack", "Full Stack", "Fullstack Engineer", "Full Stack Engineer", "Fullstack Developer", "Full Stack Developer"]),
     (r"\bMachine Learning\b", ["ML"]),
     (r"\bArtificial Intelligence\b", ["AI"]),
     (r"\bSoftware Engineer\b", ["SWE", "Software Development Engineer"]),
     (r"\bSoftware Developer\b", ["SWE", "Software Development Engineer"]),
     (r"\bSoftware Development Engineer\b", ["SDE", "Software Engineer"]),
+    (r"\bWeb Developer\b", ["Web Engineer", "Frontend Developer", "Frontend Engineer", "Software Developer"]),
     (r"\bSite Reliability\b", ["SRE"]),
     (r"\bData Engineer\b", ["DE"]),
     (r"\bData Scientist\b", ["DS"]),
@@ -392,6 +393,8 @@ def _matches_criteria(title: str, profile: dict) -> bool:
     roles = [r.strip() for r in (profile.get("target_roles") or "").split(",") if r.strip()]
     if not roles:
         return True
+    if len(roles) > 1:
+        return any(_matches_criteria(title, {**profile, "target_roles": role}) for role in roles)
 
     roles_text = " ".join(roles).lower()
     ai_focused_search = bool(_AI_TERMS_RE.search(roles_text))
@@ -405,6 +408,26 @@ def _matches_criteria(title: str, profile: dict) -> bool:
         return False
     if ai_focused_search and title_has_ai and title_has_leadership and not leadership_requested:
         return False
+
+    low_title = title.lower()
+    if ai_focused_search:
+        return title_has_ai and title_has_tech
+    if re.search(r"\bjava\b", roles_text):
+        return bool(re.search(r"\bjava\b", low_title)) and title_has_tech
+    if "front" in roles_text:
+        frontend_terms = ("frontend", "front-end", "front end", "react", "angular", "vue", "javascript", "typescript")
+        return any(term in low_title for term in frontend_terms) and title_has_tech
+    if "fullstack" in roles_text or "full stack" in roles_text or "full-stack" in roles_text:
+        return any(term in low_title for term in ("fullstack", "full stack", "full-stack")) and title_has_tech
+    if "web developer" in roles_text:
+        web_terms = ("web developer", "web engineer", "frontend", "front-end", "front end", "react", "javascript", "typescript")
+        return any(term in low_title for term in web_terms) and title_has_tech
+    if "software developer" in roles_text or "software engineer" in roles_text:
+        software_terms = (
+            "software developer", "software engineer", "software development engineer",
+            "sde", "swe", "application developer", "applications developer",
+        )
+        return any(term in low_title for term in software_terms)
 
     all_variants: list[str] = []
     for role in roles:
@@ -776,7 +799,8 @@ async def warm_job_pool(posted_within_days: int | None = 7) -> dict:
 
 
 async def seed_user_feed_from_pool(
-    user_id: int, profile: dict, *, search_profile_id: int | None = None, limit: int = 150
+    user_id: int, profile: dict, *, search_profile_id: int | None = None, limit: int = 150,
+    strict_locations: bool = False,
 ) -> int:
     """Fast feed seed: pull matching jobs from the shared JobPool into the user's
     DiscoveredJob feed so results appear instantly — no live 895-slug crawl. Role
@@ -798,7 +822,14 @@ async def seed_user_feed_from_pool(
             q = q.where(or_(*[func.lower(JobPool.title).contains(t.lower()) for t in terms]))
         if locations:
             loc_conds = [func.lower(JobPool.location).contains(l.lower()) for l in locations]
-            loc_conds.append(JobPool.location.is_(None))
+            loc_conds.extend([
+                func.lower(JobPool.location).contains("remote india"),
+                func.lower(JobPool.location).contains("pan india"),
+                func.lower(JobPool.location).contains("pan-india"),
+                func.lower(JobPool.location).contains("anywhere in india"),
+            ])
+            if not strict_locations:
+                loc_conds.append(JobPool.location.is_(None))
             q = q.where(or_(*loc_conds))
         pool_jobs = (await db.execute(
             q.order_by(JobPool.last_seen_at.desc()).limit(limit)

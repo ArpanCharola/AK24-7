@@ -30,13 +30,14 @@ _QUERY_JITTER = (1.0, 3.0)   # seconds slept between queries to look less bot-li
 _SITES = {
     "indeed": ("SCRAPE_INDEED", True),
     "google": ("SCRAPE_GOOGLE", True),
-    "naukri": ("SCRAPE_NAUKRI", False),
-    "linkedin": ("SCRAPE_LINKEDIN", False),
-    "glassdoor": ("SCRAPE_GLASSDOOR", False),
+    "naukri": ("SCRAPE_NAUKRI", True),
+    "linkedin": ("SCRAPE_LINKEDIN", True),
+    "glassdoor": ("SCRAPE_GLASSDOOR", True),
 }
 
-_RESULTS_WANTED = 30
+_RESULTS_WANTED = 50
 _COUNTRY = "India"
+_MAX_LOCATIONS = 6
 
 
 def _clean(value):
@@ -130,7 +131,7 @@ def _scrape_blocking(site: str, query: str, location: str, proxies: list[str] | 
     return out, True
 
 
-async def _scrape_site(site: str, queries: list[str], location: str, proxies: list[str] | None) -> list[dict]:
+async def _scrape_site(site: str, queries: list[str], locations: list[str], proxies: list[str] | None) -> list[dict]:
     if not circuit.allow(site):
         logger.info("Tier-3 %s skipped — circuit open", site)
         return []
@@ -138,19 +139,21 @@ async def _scrape_site(site: str, queries: list[str], location: str, proxies: li
     jobs: list[dict] = []
     seen: set[str] = set()
     ok_any = False
-    selected = queries[:2]
+    selected = queries[:4]
+    selected_locations = (locations or ["India"])[:_MAX_LOCATIONS]
     for i, query in enumerate(selected):
-        try:
-            recs, ok = await asyncio.to_thread(_scrape_blocking, site, query, location, proxies)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Tier-3 %s/%r thread failed: %s", site, query, exc)
-            recs, ok = [], False
-        if ok:
-            ok_any = True
-        for j in recs:
-            if j["job_url"] not in seen:
-                seen.add(j["job_url"])
-                jobs.append(j)
+        for location in selected_locations:
+            try:
+                recs, ok = await asyncio.to_thread(_scrape_blocking, site, query, location, proxies)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Tier-3 %s/%r/%r thread failed: %s", site, query, location, exc)
+                recs, ok = [], False
+            if ok:
+                ok_any = True
+            for j in recs:
+                if j["job_url"] not in seen:
+                    seen.add(j["job_url"])
+                    jobs.append(j)
         if i < len(selected) - 1:
             await asyncio.sleep(random.uniform(*_QUERY_JITTER))
 
@@ -171,7 +174,7 @@ async def fetch_all_scraped(queries: list[str], locations: list[str]) -> list[di
         return []
 
     proxies = proxy_pool.as_list()   # jobspy rotates the list itself; None = direct
-    location = locations[0] if locations else "India"
+    selected_locations = list(dict.fromkeys([*(locations or []), "India", "Remote India"]))[:_MAX_LOCATIONS]
 
     enabled = [
         site for site, (attr, default) in _SITES.items()
@@ -181,7 +184,7 @@ async def fetch_all_scraped(queries: list[str], locations: list[str]) -> list[di
         return []
 
     results = await asyncio.gather(
-        *(_scrape_site(site, queries, location, proxies) for site in enabled),
+        *(_scrape_site(site, queries, selected_locations, proxies) for site in enabled),
         return_exceptions=True,
     )
     jobs: list[dict] = []

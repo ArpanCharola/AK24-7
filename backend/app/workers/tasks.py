@@ -269,6 +269,13 @@ def aggregate_job_warehouse_task(self, trigger: str = "scheduled"):
     return asyncio.run(run_aggregation(trigger=trigger))
 
 
+@celery_app.task(bind=True, name="backfill_entry_level_supply")
+def backfill_entry_level_supply_task(self, posted_within_days: int = 7):
+    """Refresh broad fresher/entry-level India tech jobs into JobPool."""
+    from app.services.entry_level_supply import backfill_entry_level_supply
+    return asyncio.run(backfill_entry_level_supply(posted_within_days=posted_within_days, use_stealth=False))
+
+
 @celery_app.task(bind=True, name="cleanup_job_warehouse")
 def cleanup_job_warehouse_task(self):
     """Expire day-eight jobs and purge retained heavy content."""

@@ -43,15 +43,21 @@ class DiscoveredJobResponse(BaseModel):
 @router.get("/discovered-jobs", response_model=list[DiscoveredJobResponse])
 async def list_discovered(
     status: Optional[str] = Query(None),
-    posted_within_days: Optional[int] = Query(None),
+    posted_within_days: Optional[int] = Query(None, ge=1, le=7),
+    target_id: Optional[int] = Query(None, description="Additive Job Target filter"),
+    search_profile_id: Optional[int] = Query(None, description="Legacy alias for target_id"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     q = select(DiscoveredJob).where(DiscoveredJob.user_id == current_user.id)
+    selected_target = target_id if target_id is not None else search_profile_id
+    if selected_target is not None:
+        q = q.where(DiscoveredJob.search_profile_id == selected_target)
     if status:
         q = q.where(DiscoveredJob.status == status)
-    if posted_within_days:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=posted_within_days)
+    freshness_days = posted_within_days or 7
+    cutoff = datetime.now(timezone.utc) - timedelta(days=freshness_days)
+    if freshness_days > 0:
         # Keep rows with an unknown posting date — a NULL posted_at means the
         # source didn't expose one, not that the job is old; dropping them would
         # silently hide jobs from the list/export.
@@ -301,7 +307,9 @@ async def delete_job(
 @router.get("/discovered-jobs/export")
 async def export_discovered_jobs(
     status: Optional[str] = Query(None),
-    posted_within_days: Optional[int] = Query(None),
+    posted_within_days: Optional[int] = Query(None, ge=1, le=7),
+    target_id: Optional[int] = Query(None, description="Additive Job Target filter"),
+    search_profile_id: Optional[int] = Query(None, description="Legacy alias for target_id"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -310,10 +318,14 @@ async def export_discovered_jobs(
     from openpyxl.styles import Font, PatternFill, Alignment
 
     q = select(DiscoveredJob).where(DiscoveredJob.user_id == current_user.id)
+    selected_target = target_id if target_id is not None else search_profile_id
+    if selected_target is not None:
+        q = q.where(DiscoveredJob.search_profile_id == selected_target)
     if status:
         q = q.where(DiscoveredJob.status == status)
-    if posted_within_days:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=posted_within_days)
+    freshness_days = posted_within_days or 7
+    cutoff = datetime.now(timezone.utc) - timedelta(days=freshness_days)
+    if freshness_days > 0:
         # Keep rows with an unknown posting date — a NULL posted_at means the
         # source didn't expose one, not that the job is old; dropping them would
         # silently hide jobs from the list/export.
@@ -331,7 +343,7 @@ async def export_discovered_jobs(
 
     headers = ["Title", "Company", "Location", "Source", "Work Arrangement",
                "Match Score", "Status", "Posted At", "Discovered At", "Job URL", "Match Reason"]
-    header_fill = PatternFill("solid", fgColor="4F46E5")
+    header_fill = PatternFill("solid", fgColor="123047")
     header_font = Font(bold=True, color="FFFFFF")
 
     for col, header in enumerate(headers, 1):

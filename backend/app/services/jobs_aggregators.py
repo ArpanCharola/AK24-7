@@ -250,11 +250,11 @@ async def fetch_all_aggregators(client, queries: list[str], locations: list[str]
     from app.config import settings
 
     jooble_key = getattr(settings, "JOOBLE_API_KEY", "") or ""
-    location = (locations[0] if locations else "India")
+    selected_locations = list(dict.fromkeys([*(locations or []), "India", "Remote India"]))[:4]
 
     tasks = [
         timesjobs_rss(client, queries, locations),
-        jooble(client, queries, location, jooble_key),
+        *(jooble(client, queries, location, jooble_key) for location in selected_locations),
         remotive(client, queries),
         remoteok(client, queries),
         himalayas(client, queries),

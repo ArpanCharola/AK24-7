@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
       libreoffice-core \
       libreoffice-writer \
+      tesseract-ocr \
       fonts-liberation \
       fonts-dejavu-core \
       ca-certificates \
@@ -24,6 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir gunicorn==23.0.0
 
 # Headless Chromium for SmartApplyAgent — pulls its own system libs
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN python -m playwright install chromium
 
 # Vendor the resume-formatter repo so PDF rendering works inside the image.
@@ -42,8 +44,8 @@ COPY . .
 # Non-root runtime user (Playwright still works as long as it can write
 # /home/app/.cache). Uploads dir is owned by app so volume mounts inherit perms.
 RUN useradd -m -u 1000 app \
-    && mkdir -p /app/uploads /home/app/.cache \
-    && chown -R app:app /app /home/app/.cache /opt/resume-formatter \
+    && mkdir -p /app/uploads /home/app/.cache /ms-playwright \
+    && chown -R app:app /app /home/app/.cache /ms-playwright /opt/resume-formatter \
         && chmod +x /app/start.sh
 USER app
 

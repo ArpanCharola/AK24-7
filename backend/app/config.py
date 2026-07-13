@@ -53,9 +53,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"
 
-    # Background scheduler (APScheduler replaces Celery Beat). Off until discovery/
-    # matching streams land; flip to true to run periodic discovery + daily digest.
-    ENABLE_SCHEDULER: bool = False
+    # The shared warehouse is a product capability, not a user-triggered scrape.
+    # Deploy a single scheduler-owning API worker or set this false in replicas.
+    ENABLE_SCHEDULER: bool = True
 
     # Gmail + Google Sign-In — new "AK24/7Jobs" Google Cloud project (read/label/send).
     GOOGLE_PROJECT_ID: str = ""
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # ── Tier-3 scraping (all-in, self-host, free) ────────────────────────────
     # Master gate. Off by default so a hosted env never scrapes unintentionally;
     # flip to true (in .env) to enable the per-source toggles below.
-    TIER3_ENABLED: bool = False
+    TIER3_ENABLED: bool = True
     # Per-source toggles. jobspy boards + the custom adapters. A source that is
     # off is skipped entirely; a source that is on but fails degrades to [].
     SCRAPE_INDEED: bool = True
@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     SCRAPE_WELLFOUND: bool = True      # custom adapter (stealth browser) — best-effort
     SCRAPE_HIRECT: bool = False        # mobile-API spike — off until an endpoint is confirmed
     SCRAPE_HIRIST: bool = False        # hirist.tech (Next.js SSR) — opt-in; robots allows listing pages (Crawl-delay 10)
+    SCRAPE_HIRIST: bool = True
     HIRIST_API_BASE: str = ""          # reserved if a hirist JSON API is later confirmed
 
     # Comma-separated proxies for Tier-3 (e.g. "http://user:pass@host:port,..").

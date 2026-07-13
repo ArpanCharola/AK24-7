@@ -114,7 +114,8 @@ async def search_serpapi_jobs(
         _is_within_days,
     )
 
-    roles = [r.strip() for r in (profile.get("target_roles") or "").split(",") if r.strip()]
+    query_text = profile.get("search_query") or profile.get("target_roles") or ""
+    roles = [r.strip() for r in query_text.split(",") if r.strip()]
     if not roles:
         logger.warning(
             "SerpAPI source skipped: profile has no target_roles. "
@@ -127,7 +128,9 @@ async def search_serpapi_jobs(
     locations = [
         loc.strip() for loc in (profile.get("locations") or "").split(",") if loc.strip()
     ]
-    location = locations[0] if locations else "United States"
+    location = locations[0] if locations else "India"
+    if location.strip().lower() in {"all india", "india", "pan india", "remote india"}:
+        location = "India"
 
     chip = _date_posted_chip(posted_within_days)
 
@@ -139,7 +142,7 @@ async def search_serpapi_jobs(
                 "engine": "google_jobs",
                 "q": role,
                 "location": location,
-                "gl": "us",
+                "gl": "in",
                 "hl": "en",
                 "api_key": api_key,
             }

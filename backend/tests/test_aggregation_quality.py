@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -65,8 +66,7 @@ def test_batch_dedupe_retains_sightings_but_not_false_positive_roles():
     assert not result.rejections
 
 
-@pytest.mark.asyncio
-async def test_registry_isolates_source_failures():
+def test_registry_isolates_source_failures():
     async def good(_request):
         return [job(source="")]
 
@@ -76,6 +76,6 @@ async def test_registry_isolates_source_failures():
     registry = SourceRegistry()
     registry.register(FunctionSourceAdapter("good", good))
     registry.register(FunctionSourceAdapter("bad", bad))
-    jobs, errors = await registry.fetch_all(SourceRequest(("software engineer",)))
+    jobs, errors = asyncio.run(registry.fetch_all(SourceRequest(("software engineer",))))
     assert jobs[0]["source"] == "good"
     assert errors == {"bad": "RuntimeError: blocked"}

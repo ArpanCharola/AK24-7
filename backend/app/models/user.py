@@ -63,6 +63,7 @@ class User(Base):
     expected_ctc_lpa: Mapped[float | None] = mapped_column(Float, nullable=True)
     notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preferred_locations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    desired_roles: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Total professional experience, split years + months. Drives the
     # Entry / Mid / Senior level the job search targets.
     experience_years: Mapped[int | None] = mapped_column(Integer, nullable=True)

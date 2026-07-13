@@ -7,10 +7,11 @@ endpoint to edit/reset a user's password.
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_admin
 from app.core.database import get_db
@@ -24,6 +25,7 @@ from app.models.saved_application import SavedApplication
 from app.models.sent_email import SentEmail
 from app.models.tailored_resume import TailoredResume
 from app.models.user import User
+from app.models.job_warehouse import AggregationRun, CanonicalJob, DemandCluster, JobSourceSighting, ProfileJobMatch, SourceRunMetric
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -392,3 +394,82 @@ async def registry_stats(
     )).all())
     total = int((await db.execute(select(func.count()).select_from(CompanySource))).scalar() or 0)
     return {"total": total, "by_status": by_status, "active_by_ats": by_ats_active}
+
+
+# â”€â”€ Shared job warehouse + aggregation analytics â”€â”€
+
+def _ist_day_bounds(days: int = 0):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    ist = ZoneInfo("Asia/Kolkata")
+    today = datetime.now(ist).date() - timedelta(days=days)
+    start = datetime.combine(today, datetime.min.time(), tzinfo=ist)
+    return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
+
+
+@router.get("/analytics", summary="Warehouse analytics and source contribution")
+async def warehouse_analytics(
+    range: str = Query("today", pattern="^(today|7d|30d|90d)$"),
+    _: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db),
+):
+    from datetime import timedelta
+    start_today, end_today = _ist_day_bounds(); start_yesterday, end_yesterday = _ist_day_bounds(1)
+    span = {"today": 1, "7d": 7, "30d": 30, "90d": 90}[range]
+    series_start = start_today - timedelta(days=span - 1)
+    async def metric(column, start, end):
+        return int((await db.execute(select(func.coalesce(func.sum(column), 0)).where(AggregationRun.started_at >= start, AggregationRun.started_at < end))).scalar() or 0)
+    live = int((await db.execute(select(func.count()).select_from(CanonicalJob).where(CanonicalJob.status == "live"))).scalar() or 0)
+    profiles_with_matches = int((await db.execute(select(func.count(func.distinct(ProfileJobMatch.profile_id))))).scalar() or 0)
+    active_profiles = int((await db.execute(select(func.count()).select_from(JobSearchProfile).where(JobSearchProfile.is_active.is_(True)))).scalar() or 0)
+    active_clusters = int((await db.execute(select(func.count()).select_from(DemandCluster).where(DemandCluster.status == "active"))).scalar() or 0)
+    source_rows = (await db.execute(select(SourceRunMetric.source, func.coalesce(func.sum(SourceRunMetric.raw_found),0), func.coalesce(func.sum(SourceRunMetric.accepted_unique),0), func.coalesce(func.sum(SourceRunMetric.duplicate_sightings),0), func.coalesce(func.sum(SourceRunMetric.rejected),0), func.max(SourceRunMetric.finished_at), func.max(SourceRunMetric.status)).where(SourceRunMetric.started_at >= series_start).group_by(SourceRunMetric.source).order_by(SourceRunMetric.source))).all()
+    daily_rows = (await db.execute(select(func.date(AggregationRun.started_at), func.coalesce(func.sum(AggregationRun.accepted_unique),0)).where(AggregationRun.started_at >= series_start).group_by(func.date(AggregationRun.started_at)).order_by(func.date(AggregationRun.started_at)))).all()
+    role_rows = (await db.execute(
+        select(CanonicalJob.role_family, func.count())
+        .where(CanonicalJob.status == "live")
+        .group_by(CanonicalJob.role_family)
+        .order_by(func.count().desc())
+        .limit(12)
+    )).all()
+    location_rows = (await db.execute(
+        select(CanonicalJob.location_normalized, func.count())
+        .where(CanonicalJob.status == "live", CanonicalJob.location_normalized.is_not(None))
+        .group_by(CanonicalJob.location_normalized)
+        .order_by(func.count().desc())
+        .limit(12)
+    )).all()
+    return {"kpis": {"raw_found_today": await metric(AggregationRun.raw_found, start_today, end_today), "accepted_today": await metric(AggregationRun.accepted_unique, start_today, end_today), "raw_found_yesterday": await metric(AggregationRun.raw_found, start_yesterday, end_yesterday), "live_jobs": live, "duplicates_today": await metric(AggregationRun.duplicate_sightings, start_today, end_today), "rejected_today": await metric(AggregationRun.rejected, start_today, end_today), "profiles_with_matches": profiles_with_matches, "profiles_waiting": max(0, active_profiles - profiles_with_matches), "active_clusters": active_clusters, "recommendation_coverage_pct": round((profiles_with_matches / active_profiles) * 100, 1) if active_profiles else 0}, "daily": [{"date": str(d), "accepted_unique": int(v)} for d,v in daily_rows], "sources": [{"source": s, "raw_found": int(raw), "accepted_unique": int(acc), "duplicates": int(dup), "rejected": int(rej), "live_now": int((await db.execute(select(func.count()).select_from(JobSourceSighting).join(CanonicalJob).where(JobSourceSighting.source == s, CanonicalJob.status == "live"))).scalar() or 0), "last_success": _iso(last), "status": status or "unknown"} for s,raw,acc,dup,rej,last,status in source_rows], "roles": [{"role": role or "Unclassified", "count": int(count)} for role, count in role_rows], "locations": [{"location": loc or "Unspecified", "count": int(count)} for loc, count in location_rows]}
+
+
+@router.get("/jobs", summary="Paginated canonical job warehouse")
+async def warehouse_jobs(
+    page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100), q: str = "", role: str = "", location: str = "", source: str = "", status: str = "live", time: str = Query("", pattern="^(|today|7d|30d|90d)$"),
+    _: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db),
+):
+    from datetime import timedelta
+    stmt = select(CanonicalJob).options(selectinload(CanonicalJob.employer))
+    if status: stmt = stmt.where(CanonicalJob.status == status)
+    if q:
+        like = f"%{q.strip()}%"; stmt = stmt.where((CanonicalJob.title.ilike(like)) | (CanonicalJob.location.ilike(like)))
+    if role:
+        like = f"%{role.strip()}%"; stmt = stmt.where((CanonicalJob.title.ilike(like)) | (CanonicalJob.role_family.ilike(like)))
+    if location:
+        like = f"%{location.strip().lower()}%"; stmt = stmt.where((CanonicalJob.location_normalized.ilike(like)) | (CanonicalJob.location.ilike(f"%{location.strip()}%")))
+    if time:
+        days = {"today": 1, "7d": 7, "30d": 30, "90d": 90}[time]
+        stmt = stmt.where(CanonicalJob.posted_at >= _ist_day_bounds()[0] - timedelta(days=days - 1))
+    if source: stmt = stmt.where(CanonicalJob.sightings.any(JobSourceSighting.source == source))
+    total = int((await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0)
+    rows = (await db.execute(stmt.order_by(CanonicalJob.posted_at.desc()).offset((page-1)*page_size).limit(page_size))).scalars().unique().all()
+    items=[]
+    for job in rows:
+        source_count=int((await db.execute(select(func.count()).select_from(JobSourceSighting).where(JobSourceSighting.canonical_job_id==job.id))).scalar() or 0)
+        matches=int((await db.execute(select(func.count()).select_from(ProfileJobMatch).where(ProfileJobMatch.canonical_job_id==job.id))).scalar() or 0)
+        items.append({"id":job.id,"title":job.title,"employer":{"name":job.employer.name},"location":job.location,"work_arrangement":job.work_arrangement,"posted_at":_iso(job.posted_at),"status":job.status,"source_count":source_count,"matched_profiles":matches})
+    return {"items":items,"total":total,"page":page,"pages":max(1,(total+page_size-1)//page_size)}
+
+
+@router.get("/aggregation/runs", summary="Shared aggregation run history")
+async def aggregation_runs(limit: int = Query(20, ge=1, le=200), _: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    rows=(await db.execute(select(AggregationRun).order_by(AggregationRun.started_at.desc()).limit(limit))).scalars().all()
+    return {"items":[{"id":r.id,"trigger":r.trigger,"status":r.status,"started_at":_iso(r.started_at),"finished_at":_iso(r.finished_at),"duration_seconds":round((r.finished_at-r.started_at).total_seconds(),1) if r.started_at and r.finished_at else None,"raw_found":r.raw_found,"accepted_unique":r.accepted_unique,"rejected":r.rejected,"error_summary":r.error_summary} for r in rows]}
