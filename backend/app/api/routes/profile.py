@@ -81,6 +81,30 @@ _SCALAR_FIELDS = (
 )
 
 
+def _clean_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            parsed = None
+        items = parsed if isinstance(parsed, list) else value.split(",")
+    else:
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item).strip()
+        key = text.casefold()
+        if text and key not in seen:
+            cleaned.append(text)
+            seen.add(key)
+    return cleaned
+
+
 def _parse_locations(raw: str | None) -> list[str]:
     """Preferred locations persist as a JSON array (legacy rows may be CSV)."""
     if not raw:
@@ -136,6 +160,29 @@ async def update_profile(
     """Save the profile. Scalar contact fields write straight to columns;
     structured sections are JSON-serialised into their Text columns."""
     data = body.model_dump(exclude_unset=True)
+    if "desired_roles" in data:
+        roles = _clean_list(data["desired_roles"])
+        if not roles:
+            raise HTTPException(status_code=422, detail="Add at least one desired role.")
+        data["desired_roles"] = ", ".join(roles)
+
+    if "preferred_locations" in data:
+        locations = _clean_list(data["preferred_locations"])
+        if not locations:
+            raise HTTPException(status_code=422, detail="Add at least one desired location.")
+        data["preferred_locations"] = locations
+
+    if "skills" in data:
+        skills = _clean_list(data["skills"])
+        if not skills:
+            raise HTTPException(status_code=422, detail="Add at least one skill.")
+        data["skills"] = skills
+
+    if (
+        "experience_years" in data
+        or "experience_months" in data
+    ) and data.get("experience_years") is None and data.get("experience_months") is None:
+        raise HTTPException(status_code=422, detail="Add your total experience.")
 
     for field in _SCALAR_FIELDS:
         if field in data:
@@ -151,7 +198,17 @@ async def update_profile(
 
     for section in _LIST_SECTIONS:
         if section in data:
-            setattr(current_user, section, json.dumps(data[section]))
+            setattr(current_user, section, data[section])
+
+    if not current_user.resume_text and current_user.desired_roles and current_user.preferred_locations and current_user.skills:
+        skill_text = ", ".join(_clean_list(current_user.skills))
+        location_text = ", ".join(_parse_locations(current_user.preferred_locations))
+        current_user.resume_text = (
+            "Manual profile completed. "
+            f"Desired roles: {current_user.desired_roles}. "
+            f"Preferred locations: {location_text}. "
+            f"Skills: {skill_text}."
+        )
 
     await db.commit()
     await db.refresh(current_user)
