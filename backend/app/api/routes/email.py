@@ -311,6 +311,7 @@ async def message_detail(
     return {
         "id": msg.get("id"),
         "thread_id": msg.get("thread_id"),
+        "message_id": msg.get("message_id"),
         "from_email": msg.get("from_email"),
         "to_email": msg.get("to_email"),
         "subject": msg.get("subject"),

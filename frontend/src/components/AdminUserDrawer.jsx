@@ -104,24 +104,24 @@ export default function AdminUserDrawer({ userId, onClose }) {
   });
 
   return (
-    <div className="fixed inset-0 z-[90] flex justify-end">
+    <div className="fixed inset-0 z-[90] flex justify-end admin-drawer-shell">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl h-full bg-white shadow-2xl overflow-y-auto animate-slide-up">
-        <div className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-slate-100 px-6 py-4 flex items-center justify-between">
+      <div className="admin-drawer relative h-full w-full max-w-2xl overflow-y-auto animate-slide-up">
+        <div className="admin-drawer__head sticky top-0 z-10 flex items-center justify-between px-6 py-4">
           <div>
             <h2 className="text-lg font-bold text-slate-900">
               {u?.full_name || u?.email || "User"}
             </h2>
             <p className="text-[12px] text-slate-500">{u?.email}</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Close">
+          <button onClick={onClose} className="rounded-xl p-2 text-slate-500 hover:bg-muted" aria-label="Close">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        <div className="px-6 py-5">
+        <div className="px-6 py-5 admin-drawer__body">
           {isLoading && <p className="text-slate-400">Loading…</p>}
           {isError && (
             <p className="text-rose-600">{error?.response?.data?.detail || "Failed to load user."}</p>

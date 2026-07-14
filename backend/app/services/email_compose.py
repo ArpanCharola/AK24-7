@@ -25,6 +25,60 @@ _PURPOSE_GUIDANCE = {
 }
 
 
+def _subject_for(purpose: str, company: str, role: str) -> str:
+    if purpose == "follow_up":
+        return f"Following up on {role} at {company}"
+    if purpose == "thank_you":
+        return f"Thank you — {role} conversation"
+    if purpose == "reply":
+        return f"Re: {role} at {company}"
+    return f"Interest in {role} at {company}"
+
+
+def _fallback_draft(purpose: str, context: dict) -> dict:
+    company = context.get("company") or "your team"
+    role = context.get("role") or "the role"
+    candidate_name = (context.get("candidate_name") or "").strip()
+    recipient_name = (context.get("recipient_name") or "").strip()
+    greeting_name = recipient_name or "there"
+    signoff_name = candidate_name or "Best regards"
+    background = " ".join((context.get("career_history") or "").split())
+    highlight = background[:220].rstrip(" .,;") if background else "my background and recent work"
+    last_message = (context.get("last_message") or "").strip()
+
+    if purpose == "follow_up":
+        body = (
+            f"Hi {greeting_name},\n\n"
+            f"I wanted to follow up on the {role} opportunity at {company}. "
+            f"I'm still very interested and would be glad to share any additional information that may be helpful.\n\n"
+            f"Best regards,\n{signoff_name}"
+        )
+    elif purpose == "thank_you":
+        body = (
+            f"Hi {greeting_name},\n\n"
+            f"Thank you for your time and for the conversation about the {role} opportunity. "
+            f"I enjoyed learning more about {company} and remain excited about the role.\n\n"
+            f"Best regards,\n{signoff_name}"
+        )
+    elif purpose == "reply":
+        body = (
+            f"Hi {greeting_name},\n\n"
+            f"Thank you for your message about {role} at {company}. "
+            f"{last_message or 'I appreciate the update and would be happy to continue the conversation.'}\n\n"
+            f"Best regards,\n{signoff_name}"
+        )
+    else:
+        body = (
+            f"Hi {greeting_name},\n\n"
+            f"I'm reaching out regarding the {role} opportunity at {company}. "
+            f"Based on {highlight}, I believe my experience could be a strong fit for the role. "
+            f"I'd be glad to share more details or speak briefly if helpful.\n\n"
+            f"Best regards,\n{signoff_name}"
+        )
+
+    return {"subject": _subject_for(purpose, company, role), "body": body}
+
+
 async def draft_email(purpose: str, context: dict) -> dict:
     """Return {"subject", "body"} for the given purpose. `context` may include
     candidate_name, career_history, company, role, recipient_name, last_message."""
@@ -50,12 +104,16 @@ async def draft_email(purpose: str, context: dict) -> dict:
     if context.get("last_message"):
         user += f"\nRecruiter's message to reply to:\n{context['last_message'][:1500]}\n"
 
-    raw = await _generate(system, user, max_tokens=600)
-    parsed = _parse_json(raw)
-    subject = (parsed.get("subject") or "").strip() if isinstance(parsed, dict) else ""
-    body = (parsed.get("body") or "").strip() if isinstance(parsed, dict) else ""
-    if not body:  # parse fell back to {"raw": ...} or empty — use raw text as the body
-        body = raw.strip()
-    if not subject:
-        subject = f"Following up — {role} at {company}" if purpose == "follow_up" else f"{role} at {company}"
-    return {"subject": subject, "body": body}
+    try:
+        raw = await _generate(system, user, max_tokens=600)
+        parsed = _parse_json(raw)
+        subject = (parsed.get("subject") or "").strip() if isinstance(parsed, dict) else ""
+        body = (parsed.get("body") or "").strip() if isinstance(parsed, dict) else ""
+        if not body:  # parse fell back to {"raw": ...} or empty — use raw text as the body
+            body = raw.strip()
+        if not subject:
+            subject = _subject_for(purpose, company, role)
+        return {"subject": subject, "body": body}
+    except Exception as exc:
+        logger.warning("Email compose AI fallback triggered for purpose=%s: %s", purpose, exc)
+        return _fallback_draft(purpose, context)

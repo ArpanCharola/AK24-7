@@ -1,5 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="18" fill="#14243D"/>
-  <path d="M32 13 14 49M32 13v36M20 37h12" stroke="#F7FAFC" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="m32 30 18-17M32 30l19 19" stroke="#6FE0B6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="akBrand" x1="12" y1="10" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C3AED" />
+      <stop offset="1" stop-color="#1D4ED8" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="18" fill="#0F172A" />
+  <rect x="4" y="4" width="56" height="56" rx="18" stroke="url(#akBrand)" stroke-width="2.2" />
+  <rect x="9" y="9" width="46" height="46" rx="14" stroke="rgba(248,250,252,0.10)" stroke-width="1.4" />
+  <circle cx="45" cy="18" r="10" fill="url(#akBrand)" opacity="0.18" />
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="5.2">
+    <path d="M16 42 L27 16 L38 42" stroke="#F8FAFC" />
+    <path d="M21 30 H33" stroke="#F8FAFC" />
+    <path d="M41 16 V42" stroke="#F8FAFC" />
+    <path d="M41 29 L52 16" stroke="url(#akBrand)" />
+    <path d="M41 29 L52 42" stroke="url(#akBrand)" />
+  </g>
 </svg>

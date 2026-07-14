@@ -10,7 +10,9 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-const PUBLIC_PATHS = ["/login", "/jobs"];
+// Keep this aligned with actual router-level public pages. Right now only the
+// login screen is public; /jobs is an authenticated workspace route.
+const PUBLIC_PATHS = ["/login"];
 
 api.interceptors.response.use(
   (res) => res,

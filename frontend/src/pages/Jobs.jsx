@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Search, SlidersHorizontal } from "lucide-react";
-import { discoveredJobsApi, matchesApi, publicJobsApi } from "../services/api";
+import { RefreshCw, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { matchesApi, publicJobsApi } from "../services/api";
 import { useProfile } from "../hooks/useProfile";
 import JobMatchCard from "../components/Jobs/JobMatchCard";
 import ProfileGate from "../components/Profile/ProfileGate";
@@ -33,7 +33,10 @@ function asList(value) {
   } catch {
     // legacy CSV
   }
-  return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function profileExperience(profile) {
@@ -46,18 +49,30 @@ function profileExperience(profile) {
 
 function hasRecommendationProfile(profile) {
   return Boolean(
-    profile?.resume_text &&
-    asList(profile?.desired_roles).length > 0 &&
-    asList(profile?.preferred_locations).length > 0
+    profile?.resume_text && asList(profile?.desired_roles).length > 0 && asList(profile?.preferred_locations).length > 0
   );
+}
+
+function normalizeLocationValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function locationMatchesSelection(jobLocation, selectedLocations) {
+  const normalizedJobLocation = normalizeLocationValue(jobLocation);
+  const requested = (selectedLocations || []).map(normalizeLocationValue).filter(Boolean);
+  if (!requested.length || requested.includes("india")) return true;
+  return requested.some((location) => {
+    if (["remote india", "pan india"].includes(location)) {
+      return normalizedJobLocation.includes("remote") || normalizedJobLocation.includes("india");
+    }
+    return normalizedJobLocation.includes(location);
+  });
 }
 
 function SearchLocationPicker({ value, onChange }) {
   const [needle, setNeedle] = useState("");
   const selected = value.length ? value : ["India"];
-  const visible = SEARCH_LOCATION_OPTIONS.filter((item) =>
-    item.toLowerCase().includes(needle.trim().toLowerCase())
-  );
+  const visible = SEARCH_LOCATION_OPTIONS.filter((item) => item.toLowerCase().includes(needle.trim().toLowerCase()));
   const remoteVisible = visible.filter((item) => ["India", "Remote India", "Pan India"].includes(item));
   const cityVisible = visible.filter((item) => !["India", "Remote India", "Pan India"].includes(item));
 
@@ -76,28 +91,32 @@ function SearchLocationPicker({ value, onChange }) {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card/80 p-3">
-      <div className="flex flex-wrap gap-1.5 mb-2">
+    <div className="rounded-[24px] border border-border bg-card/80 p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap gap-1.5">
         {selected.map((item) => (
-          <span key={item} className="pill pill-brand">{item}</span>
+          <span key={item} className="pill pill-brand">
+            {item}
+          </span>
         ))}
       </div>
-      <label className="flex items-center gap-2 input-glass !py-2 mb-2">
-        <Search size={14} className="text-muted-foreground shrink-0" />
+      <label className="input-glass mb-3 flex items-center gap-2 !py-2.5">
+        <Search size={14} className="shrink-0 text-muted-foreground" />
         <input
           value={needle}
           onChange={(event) => setNeedle(event.target.value)}
           placeholder="Search India locations..."
-          className="flex-1 bg-transparent text-[13px] outline-none text-foreground"
+          className="flex-1 bg-transparent text-[13px] text-foreground outline-none"
         />
       </label>
-      <div className="max-h-44 overflow-y-auto pr-1 space-y-2">
+      <div className="max-h-52 space-y-3 overflow-y-auto pr-1">
         {remoteVisible.length > 0 && (
           <div>
-            <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">National / Remote</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
+            <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              National / Remote
+            </p>
+            <div className="grid grid-cols-2 gap-1 md:grid-cols-3">
               {remoteVisible.map((item) => (
-                <label key={item} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] hover:bg-muted cursor-pointer">
+                <label key={item} className="flex cursor-pointer items-center gap-2 rounded-xl px-2 py-2 text-[12px] transition-colors hover:bg-muted">
                   <input type="checkbox" checked={selected.includes(item)} onChange={() => toggle(item)} className="accent-brand" />
                   <span className="truncate">{item === "India" ? "All India" : item}</span>
                 </label>
@@ -108,9 +127,9 @@ function SearchLocationPicker({ value, onChange }) {
         {cityVisible.length > 0 && (
           <div>
             <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cities</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-1">
+            <div className="grid grid-cols-2 gap-1 md:grid-cols-3 xl:grid-cols-4">
               {cityVisible.map((item) => (
-                <label key={item} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] hover:bg-muted cursor-pointer">
+                <label key={item} className="flex cursor-pointer items-center gap-2 rounded-xl px-2 py-2 text-[12px] transition-colors hover:bg-muted">
                   <input type="checkbox" checked={selected.includes(item)} onChange={() => toggle(item)} className="accent-brand" />
                   <span className="truncate">{item}</span>
                 </label>
@@ -120,6 +139,40 @@ function SearchLocationPicker({ value, onChange }) {
         )}
       </div>
     </div>
+  );
+}
+
+function JobsTopHero({ mode, setMode, profileReady, searchedJobsCount }) {
+  return (
+    <section className="rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,#0f2ea8_0%,#253dce_52%,#6d28d9_140%)] px-6 py-7 text-white shadow-[0_30px_90px_-46px_rgba(37,61,206,0.52)] md:px-8 md:py-8">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="max-w-2xl">
+          <span className="inline-flex rounded-full border border-white/14 bg-white/8 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-white/82">Discovery desk · recommendations + cached India search</span>
+          <h1 className="mt-3 text-[clamp(2rem,4vw,3.5rem)] font-semibold leading-[1.02] tracking-tight text-white">
+            Find the roles worth your next application.
+          </h1>
+          <p className="mt-3 max-w-xl text-[14px] leading-7 text-slate-100/84">
+            Use profile-based recommendations when your setup is ready, or search the shared warehouse instantly without waiting on live scraping.
+          </p>
+        </div>
+        <div className="inline-flex w-fit rounded-2xl border border-white/12 bg-white/10 p-1.5 shadow-sm backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => setMode("recommended")}
+            className={`rounded-xl px-4 py-2 text-[12px] font-semibold transition-colors ${mode === "recommended" ? "bg-white text-[#0f2ea8] shadow-sm" : "text-white/72"}`}
+          >
+            Recommended {profileReady ? "ready" : "setup"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("search")}
+            className={`rounded-xl px-4 py-2 text-[12px] font-semibold transition-colors ${mode === "search" ? "bg-white text-[#0f2ea8] shadow-sm" : "text-white/72"}`}
+          >
+            Search jobs {searchedJobsCount ? `(${searchedJobsCount})` : ""}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -157,14 +210,11 @@ export default function Jobs() {
     if (!searchExperience) setSearchExperience(defaultExperience);
     if (searchDefaultsSeededRef.current) return;
     if (desiredRoles.length) setSearchRole(desiredRoles[0]);
-    if (locations.length) setSearchLocations(locations.slice(0, 4));
+    setSearchLocations(["India"]);
     searchDefaultsSeededRef.current = true;
   }, [defaultExperience, desiredRoles, experience, locations, profile, searchExperience]);
 
-  const completed =
-    (profile?.resume_text ? 1 : 0) +
-    (desiredRoles.length > 0 ? 1 : 0) +
-    (locations.length > 0 ? 1 : 0);
+  const completed = (profile?.resume_text ? 1 : 0) + (desiredRoles.length > 0 ? 1 : 0) + (locations.length > 0 ? 1 : 0);
 
   const filters = {
     role: role || undefined,
@@ -201,53 +251,42 @@ export default function Jobs() {
   const searchMutation = useMutation({
     mutationFn: async () => {
       const requestedLocations = searchLocations.length ? searchLocations : ["India"];
-      const locationsToSearch = requestedLocations.includes("India")
-        ? ["India"]
-        : requestedLocations.slice(0, 8);
-      const responses = await Promise.all(locationsToSearch.map((item) =>
-        publicJobsApi.search({
-          role: searchRole,
-          location: item,
-          experience: searchExperience,
-          workArrangement: searchWorkMode || undefined,
-          postedWithinDays: searchFreshness || 7,
-          pages: 8,
-        }).then((response) => response.data)
-      ));
+      const warehouseScope = requestedLocations.includes("India") ? ["India"] : requestedLocations;
+      const response = await publicJobsApi.browse({
+        role: searchRole,
+        location: "India",
+        experience: searchExperience,
+        workArrangement: searchWorkMode || undefined,
+        postedWithinDays: searchFreshness || 7,
+        limit: warehouseScope.length > 1 ? 150 : 100,
+      });
       const seen = new Set();
       const jobs = [];
-      for (const response of responses) {
-        for (const job of response.jobs || []) {
-          const key = job.job_url || `${job.company}-${job.title}-${job.location}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          jobs.push(job);
-        }
+      for (const job of response.data || []) {
+        if (!locationMatchesSelection(job.location, warehouseScope)) continue;
+        const key = job.job_url || `${job.company}-${job.title}-${job.location}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        jobs.push(job);
       }
       return {
         query: searchRole,
-        location: locationsToSearch.join(", "),
+        location: warehouseScope.join(", "),
         jobs,
-        fetched: responses.reduce((sum, item) => sum + (item.fetched || 0), 0),
-        saved: responses.reduce((sum, item) => sum + (item.saved || 0), 0),
+        matched: jobs.length,
+        locationsSearched: warehouseScope.length,
+        fetchedFromWarehouse: response.data?.length || 0,
       };
     },
     onSuccess: () => setSearchRan(true),
   });
 
-  const remove = useMutation({
-    mutationFn: (job) => discoveredJobsApi.remove(job.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["matches"] }),
-  });
-
-  const recommendedJobs = Array.isArray(matchesQuery.data) ? matchesQuery.data : [];
   const visibleRecommended = useMemo(() => {
+    const recommendedJobs = Array.isArray(matchesQuery.data) ? matchesQuery.data : [];
     const needle = query.trim().toLowerCase();
     if (!needle) return recommendedJobs;
-    return recommendedJobs.filter((job) =>
-      [job.title, job.company, job.location].some((value) => String(value || "").toLowerCase().includes(needle))
-    );
-  }, [recommendedJobs, query]);
+    return recommendedJobs.filter((job) => [job.title, job.company, job.location].some((value) => String(value || "").toLowerCase().includes(needle)));
+  }, [matchesQuery.data, query]);
 
   const searchedJobs = Array.isArray(searchMutation.data?.jobs) ? searchMutation.data.jobs : [];
 
@@ -267,28 +306,13 @@ export default function Jobs() {
   }
 
   return (
-    <main className="px-5 py-6 md:px-8 w-full max-w-7xl mx-auto">
-      <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-5">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight !not-italic">Jobs</h1>
-          <p className="text-[13px] text-muted-foreground mt-1 max-w-2xl">
-            Recommendations are profile-based. Search is controlled by your role, experience, location, and job type.
-          </p>
-        </div>
-        <div className="inline-flex w-fit rounded-xl border border-border bg-card p-1 shadow-sm">
-          <button type="button" onClick={() => setMode("recommended")} className={`px-3 py-1.5 text-[12px] font-semibold rounded-lg ${mode === "recommended" ? "bg-brand text-white" : "text-muted-foreground"}`}>
-            Recommended
-          </button>
-          <button type="button" onClick={() => setMode("search")} className={`px-3 py-1.5 text-[12px] font-semibold rounded-lg ${mode === "search" ? "bg-brand text-white" : "text-muted-foreground"}`}>
-            Search Jobs
-          </button>
-        </div>
-      </header>
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 md:px-8">
+      <JobsTopHero mode={mode} setMode={setMode} profileReady={profileReady} searchedJobsCount={searchedJobs.length} />
 
       {profileLoading ? (
-        <div className="glass-subtle rounded-xl h-16 animate-pulse mb-4" />
+        <div className="glass-subtle h-16 animate-pulse rounded-2xl" />
       ) : profileError ? (
-        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-[13px] text-warning mb-4">
+        <div className="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-[13px] text-warning">
           Sign in again to load recommendations from your profile. Search still works from the Search Jobs tab.
         </div>
       ) : mode === "recommended" ? (
@@ -297,75 +321,98 @@ export default function Jobs() {
 
       {mode === "recommended" && !profileLoading && profileReady && (
         <>
-          <section className="glass-subtle rounded-2xl p-4 mb-4 space-y-3" aria-label="Recommended job filters">
-            <div className="flex items-center justify-between gap-3">
+          <section className="glass-subtle rounded-[28px] p-4 md:p-5" aria-label="Recommended job filters">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
-                <h2 className="text-[13px] font-semibold text-foreground">Recommended Jobs</h2>
-                <p className="text-[12px] text-muted-foreground mt-0.5">
-                  Uses your saved resume, desired roles, desired locations, and experience.
+                <h2 className="text-sm font-semibold text-foreground">Recommended Jobs</h2>
+                <p className="mt-1 text-[12px] leading-6 text-muted-foreground">
+                  Uses your saved resume, desired roles, preferred locations, and experience.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={() => refresh.mutate()} disabled={refresh.isPending} className="btn-secondary !py-2 !px-3 text-[12px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => refresh.mutate()} disabled={refresh.isPending} className="btn-secondary !rounded-full !px-3 !py-2 text-[12px]">
                   <RefreshCw size={14} className={refresh.isPending ? "animate-spin" : ""} />
                   {refresh.isPending ? "Refreshing" : "Refresh jobs"}
                 </button>
-                <button type="button" onClick={resetFilters} className="text-[12px] font-semibold text-brand hover:underline">
-                  Clear
+                <button type="button" onClick={resetFilters} className="btn-ghost !rounded-full text-[12px] font-semibold text-brand">
+                  Clear filters
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
-              <label className="flex items-center gap-2 input-glass !py-2 xl:col-span-2">
-                <Search size={14} className="text-muted-foreground shrink-0" />
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title or company..." className="flex-1 bg-transparent text-[13px] outline-none text-foreground" />
+
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
+              <label className="input-glass flex items-center gap-2 !py-2.5 xl:col-span-2">
+                <Search size={14} className="shrink-0 text-muted-foreground" />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title or company..." className="flex-1 bg-transparent text-[13px] text-foreground outline-none" />
               </label>
-              <input className="input-glass !py-2" value={role} onChange={(event) => setRole(event.target.value)} placeholder="Role filter" />
-              <select className="input-glass !py-2" value={experience || defaultExperience} onChange={(event) => setExperience(event.target.value)}>
-                {EXPERIENCE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              <input className="input-glass !py-2.5" value={role} onChange={(event) => setRole(event.target.value)} placeholder="Role filter" />
+              <select className="input-glass !py-2.5" value={experience || defaultExperience} onChange={(event) => setExperience(event.target.value)}>
+                {EXPERIENCE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-              <select className="input-glass !py-2" value={location} onChange={(event) => setLocation(event.target.value)}>
+              <select className="input-glass !py-2.5" value={location} onChange={(event) => setLocation(event.target.value)}>
                 <option value="">All desired locations</option>
-                {locations.map((item) => <option key={item} value={item}>{item}</option>)}
+                {locations.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
               </select>
-              <select className="input-glass !py-2" value={workMode} onChange={(event) => setWorkMode(event.target.value)}>
-                {WORK_MODE_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              <select className="input-glass !py-2.5" value={workMode} onChange={(event) => setWorkMode(event.target.value)}>
+                {WORK_MODE_FILTERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <label className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
                 <SlidersHorizontal size={14} />
-                <select className="input-glass !py-2 !w-full" value={freshness} onChange={(event) => setFreshness(event.target.value)}>
-                  {FRESHNESS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                <select className="input-glass !w-full !py-2.5" value={freshness} onChange={(event) => setFreshness(event.target.value)}>
+                  {FRESHNESS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
           </section>
 
-          <p className="text-[12px] text-muted-foreground mb-3 tnum">
-            {visibleRecommended.length} recommended job{visibleRecommended.length === 1 ? "" : "s"}
-            {matchesQuery.isFetching || refresh.isPending ? " - updating" : ""}
-          </p>
-          {(refresh.isPending || refresh.data) && (
-            <div className="mb-3 rounded-xl border border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
-              {refresh.isPending ? "Refreshing recommendations from your latest profile..." : `Last refresh found ${refresh.data?.returned || visibleRecommended.length || 0} recommendation${(refresh.data?.returned || visibleRecommended.length || 0) === 1 ? "" : "s"}.`}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 text-[12px] text-muted-foreground">
+            <p className="tnum">
+              {visibleRecommended.length} recommended job{visibleRecommended.length === 1 ? "" : "s"}
+              {matchesQuery.isFetching || refresh.isPending ? " · updating" : ""}
+            </p>
+            {(refresh.isPending || refresh.data) && (
+              <div className="rounded-full border border-border bg-card/70 px-3 py-1.5">
+                {refresh.isPending
+                  ? "Refreshing recommendations from your latest profile..."
+                  : `Last refresh found ${refresh.data?.returned || visibleRecommended.length || 0} recommendation${(refresh.data?.returned || visibleRecommended.length || 0) === 1 ? "" : "s"}.`}
+              </div>
+            )}
+          </div>
 
           {matchesQuery.isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, index) => <div key={index} className="glass rounded-2xl h-40 animate-pulse" />)}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="glass h-40 rounded-3xl animate-pulse" />
+              ))}
             </div>
           ) : visibleRecommended.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center rounded-2xl border border-dashed border-border">
-              <Search size={40} strokeWidth={1} className="text-muted-foreground/40 mb-3" />
+            <div className="flex flex-col items-center justify-center rounded-[28px] border border-dashed border-border bg-card/60 py-16 text-center">
+              <Search size={40} strokeWidth={1} className="mb-3 text-muted-foreground/40" />
               <p className="text-sm font-semibold">No profile-fit recommendations yet</p>
-              <p className="text-[12.5px] text-muted-foreground mt-1 max-w-md">
+              <p className="mt-1 max-w-md text-[12.5px] text-muted-foreground">
                 We are filtering by desired location and experience. Use Search Jobs for a manual role/location search.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="job-grid">
               {visibleRecommended.map((job) => (
-                <JobMatchCard key={job.id ?? job.job_url} job={job} removing={remove.isPending} onRemove={(item) => remove.mutate(item)} />
+                <JobMatchCard key={job.id ?? job.job_url} job={job} />
               ))}
             </div>
           )}
@@ -374,68 +421,101 @@ export default function Jobs() {
 
       {mode === "search" && (
         <>
-          <form onSubmit={runSearch} className="glass-subtle rounded-2xl p-4 mb-4 space-y-4" aria-label="Manual job search">
-            <div>
-              <h2 className="text-[13px] font-semibold text-foreground">Search Jobs</h2>
-              <p className="text-[12px] text-muted-foreground mt-0.5">
-                Search by your own role, experience, location, and job type.
-              </p>
+          <form onSubmit={runSearch} className="glass-subtle rounded-[28px] p-4 md:p-5" aria-label="Manual job search">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Search Jobs</h2>
+                <p className="mt-1 text-[12px] leading-6 text-muted-foreground">
+                  Search the cached shared job warehouse by role, experience, location, and work mode — independent of your saved recommendations.
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand">
+                <Sparkles size={12} /> Warehouse search
+              </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-              <input className="input-glass !py-2 xl:col-span-2" value={searchRole} onChange={(event) => setSearchRole(event.target.value)} placeholder="Job role, e.g. Software Engineer" />
-              <select className="input-glass !py-2" value={searchExperience} onChange={(event) => setSearchExperience(event.target.value)}>
-                {EXPERIENCE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <input className="input-glass !py-2.5 xl:col-span-2" value={searchRole} onChange={(event) => setSearchRole(event.target.value)} placeholder="Job role, e.g. Software Engineer" />
+              <select className="input-glass !py-2.5" value={searchExperience} onChange={(event) => setSearchExperience(event.target.value)}>
+                {EXPERIENCE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-              <select className="input-glass !py-2" value={searchWorkMode} onChange={(event) => setSearchWorkMode(event.target.value)}>
-                {WORK_MODE_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              <select className="input-glass !py-2.5" value={searchWorkMode} onChange={(event) => setSearchWorkMode(event.target.value)}>
+                {WORK_MODE_FILTERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-              <select className="input-glass !py-2" value={searchFreshness} onChange={(event) => setSearchFreshness(event.target.value)}>
-                {FRESHNESS.filter((option) => option.value !== "").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              <select className="input-glass !py-2.5" value={searchFreshness} onChange={(event) => setSearchFreshness(event.target.value)}>
+                {FRESHNESS.filter((option) => option.value !== "").map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
-            <SearchLocationPicker value={searchLocations} onChange={setSearchLocations} />
-            <div className="flex items-center justify-between gap-3">
+
+            <div className="mt-4">
+              <SearchLocationPicker value={searchLocations} onChange={setSearchLocations} />
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <p className="text-[12px] text-muted-foreground">
-                All India searches nationally. Pick cities only when the user wants a strict city search.
+                Start with All India for maximum supply, then narrow by city or remote preference only if needed.
               </p>
-              <button type="submit" disabled={searchMutation.isPending || !searchRole.trim()} className="btn-gradient !py-2 !px-4 text-[12px]">
+              <button type="submit" disabled={searchMutation.isPending || !searchRole.trim()} className="btn-gradient w-full !rounded-full !px-5 !py-2.5 text-[12px] md:w-auto">
                 <Search size={14} />
                 {searchMutation.isPending ? "Searching" : "Search jobs"}
               </button>
             </div>
           </form>
 
-          <p className="text-[12px] text-muted-foreground mb-3 tnum">
-            {searchRan ? `${searchedJobs.length} search result${searchedJobs.length === 1 ? "" : "s"}` : "Run a search to find jobs outside your recommendations"}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 text-[12px] text-muted-foreground">
+            <p className="tnum">
+              {searchRan ? `${searchedJobs.length} search result${searchedJobs.length === 1 ? "" : "s"}` : "Run a search to find jobs outside your recommendations"}
+            </p>
+            {searchMutation.data && (
+              <div className="rounded-full border border-border bg-card/70 px-3 py-1.5 text-[11.5px]">
+                {searchMutation.data.matched || 0} cached jobs · scanned once from warehouse ({searchMutation.data.fetchedFromWarehouse || 0} rows)
+              </div>
+            )}
+          </div>
 
           {searchMutation.isPending ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, index) => <div key={index} className="glass rounded-2xl h-40 animate-pulse" />)}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="glass h-40 rounded-3xl animate-pulse" />
+              ))}
             </div>
           ) : searchMutation.isError ? (
-            <div className="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-6 text-center text-[13px] text-warning">
+            <div className="rounded-[28px] border border-warning/40 bg-warning/10 px-4 py-6 text-center text-[13px] text-warning">
               Search could not complete right now. Try a narrower role or location.
             </div>
           ) : !searchRan ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center rounded-2xl border border-dashed border-border bg-card/60">
-              <Search size={38} strokeWidth={1.4} className="text-muted-foreground/45 mb-3" />
+            <div className="flex flex-col items-center justify-center rounded-[28px] border border-dashed border-border bg-card/60 py-14 text-center">
+              <Search size={38} strokeWidth={1.4} className="mb-3 text-muted-foreground/45" />
               <p className="text-sm font-semibold">Search all India tech jobs</p>
-              <p className="text-[12.5px] text-muted-foreground mt-1 max-w-md">
+              <p className="mt-1 max-w-md text-[12.5px] text-muted-foreground">
                 Start with All India for maximum supply, then narrow by city or job type.
               </p>
             </div>
           ) : searchedJobs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center rounded-2xl border border-dashed border-border">
-              <Search size={40} strokeWidth={1} className="text-muted-foreground/40 mb-3" />
+            <div className="flex flex-col items-center justify-center rounded-[28px] border border-dashed border-border bg-card/60 py-16 text-center">
+              <Search size={40} strokeWidth={1} className="mb-3 text-muted-foreground/40" />
               <p className="text-sm font-semibold">No matching search results</p>
-              <p className="text-[12.5px] text-muted-foreground mt-1 max-w-md">
+              <p className="mt-1 max-w-md text-[12.5px] text-muted-foreground">
                 Try a broader role title, Remote India, or a nearby city.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {searchedJobs.map((job) => <JobMatchCard key={job.id ?? job.job_url} job={job} />)}
+            <div className="job-grid">
+              {searchedJobs.map((job) => (
+                <JobMatchCard key={job.id ?? job.job_url} job={job} />
+              ))}
             </div>
           )}
         </>

@@ -4,6 +4,22 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi, authApi } from "../services/api";
 import AdminUserDrawer from "../components/AdminUserDrawer";
 import { AnalyticsOverview, JobWarehouse, SourceRuns } from "../components/AdminAnalytics";
+import { Activity, Shield, Users } from "lucide-react";
+
+function AdminStat({ label, value, note, icon: Icon }) {
+  return (
+    <article className="admin-stat-card">
+      <div>
+        <p className="admin-stat-label">{label}</p>
+        <strong>{value}</strong>
+        <span>{note}</span>
+      </div>
+      <span className="admin-stat-icon">
+        <Icon size={18} />
+      </span>
+    </article>
+  );
+}
 
 function RoleBadge({ isAdmin }) {
   return (
@@ -105,38 +121,54 @@ export default function Admin() {
   if (!meData?.is_admin) return null; // redirecting
 
   const users = data?.users || [];
+  const activeUsers = users.filter((user) => user.is_active).length;
+  const gmailConnected = users.filter((user) => user.gmail_connected).length;
+  const pendingSetup = users.filter((user) => !user.credentials_set).length;
 
   if (tab === "overview") return <div className="page-wrap admin-shell"><AdminTabs tab={tab} setTab={setTab}/><AnalyticsOverview /></div>;
   if (tab === "jobs") return <div className="page-wrap admin-shell"><AdminTabs tab={tab} setTab={setTab}/><JobWarehouse /></div>;
   if (tab === "runs") return <div className="page-wrap admin-shell"><AdminTabs tab={tab} setTab={setTab}/><SourceRuns /></div>;
 
   return (
-    <div className="p-6 lg:p-8 max-w-[1400px] mx-auto admin-shell">
-      <AdminTabs tab={tab} setTab={setTab}/>
-      <div className="flex items-end justify-between mb-6">
+    <div className="page-wrap admin-shell">
+      <section className="admin-hero">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Admin · Users</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Watch every user, their progress, and their credentials. View-only — passwords can't be edited.
+          <p className="admin-eyebrow">CONTROL ROOM</p>
+          <h1>Admin · users</h1>
+          <p>
+            Review account access, setup progress, Gmail linkage, and user-level activity from one cleaner operations surface.
           </p>
         </div>
-        <div className="text-right">
-          <div className="text-3xl font-bold text-slate-900 tabular-nums">{data?.total ?? 0}</div>
-          <div className="text-[11px] uppercase tracking-wide text-slate-400">Total users</div>
-        </div>
-      </div>
+        <div className="admin-hero-pill">single admin workspace · live data</div>
+      </section>
+
+      <AdminTabs tab={tab} setTab={setTab} />
+
+      <section className="admin-user-summary">
+        <AdminStat label="Total users" value={data?.total ?? 0} note="Accounts on this deployment" icon={Users} />
+        <AdminStat label="Active" value={activeUsers} note="Enabled and able to sign in" icon={Activity} />
+        <AdminStat label="Gmail connected" value={gmailConnected} note="Inbox and send features available" icon={Shield} />
+        <AdminStat label="Setup pending" value={pendingSetup} note="Signed up but credentials still incomplete" icon={Users} />
+      </section>
 
       {isError && (
-        <div className="rounded-xl bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 text-sm mb-4">
+        <div className="admin-state admin-state--error">
           {error?.response?.data?.detail || "Failed to load users."}
         </div>
       )}
 
-      <div className="glass rounded-2xl overflow-hidden">
+      <div className="admin-users-card">
+        <div className="admin-users-card__head">
+          <div>
+            <h2>User directory</h2>
+            <p>View-only passwords, access state, counts, and quick user actions.</p>
+          </div>
+          <div className="admin-total-pill">{data?.total ?? 0} users</div>
+        </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm admin-users-table">
             <thead>
-              <tr className="text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200/70">
+              <tr>
                 <th className="px-4 py-3 font-semibold">User</th>
                 <th className="px-4 py-3 font-semibold">Username</th>
                 <th className="px-4 py-3 font-semibold">Role</th>
@@ -155,7 +187,7 @@ export default function Admin() {
                 <tr
                   key={u.id}
                   onClick={() => setOpenId(u.id)}
-                  className="border-b border-slate-100 hover:bg-white/40 cursor-pointer"
+                  className="cursor-pointer border-b border-border/80"
                 >
                   <td className="px-4 py-3">
                     <div className="font-medium text-slate-900">{u.full_name || "—"}</div>
@@ -235,7 +267,7 @@ export default function Admin() {
 function AdminTabs({ tab, setTab }) {
   return <nav className="admin-tabs" aria-label="Admin sections">
     {[['overview','Overview'],['jobs','All jobs'],['runs','Sources & runs'],['users','Users']].map(([id,label]) =>
-      <button key={id} onClick={() => setTab(id)} className={tab === id ? 'active' : ''}>{label}</button>
+      <button key={id} onClick={() => setTab(id)} className={tab === id ? 'active' : ''} aria-selected={tab === id}>{label}</button>
     )}
   </nav>;
 }
