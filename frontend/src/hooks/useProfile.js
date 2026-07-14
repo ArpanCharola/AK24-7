@@ -12,7 +12,10 @@ export function useUpdateProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) => profileApi.update(data).then((r) => r.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["profile"] }),
+    onSuccess: (profile) => {
+      queryClient.setQueryData(["profile"], profile);
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+    },
   });
 }
 

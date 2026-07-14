@@ -99,7 +99,7 @@ export default function Logo({ variant = "ak-emblem", size = 36, className = "",
   );
 }
 
-export function Wordmark({ variant: _variant = "ak-emblem", size = 34, tagline = "Jobs in India", className = "" }) {
+export function Wordmark({ size = 34, tagline = "Jobs in India", className = "" }) {
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <img

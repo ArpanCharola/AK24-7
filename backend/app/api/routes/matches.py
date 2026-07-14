@@ -208,6 +208,41 @@ def _skills_from_user(user: User) -> list[str]:
     return []
 
 
+def _has_profile_experience(user: User) -> bool:
+    return user.experience_years is not None or user.experience_months is not None
+
+
+def _ensure_manual_resume_text(user: User) -> bool:
+    """Backfill the recommendation seed for manually completed profiles.
+
+    Older deployed rows can have roles, locations, skills, and experience saved
+    but no uploaded resume_text. The recommendation pipeline only needs a text
+    seed for query building/scoring, so synthesize the same compact profile text
+    that PUT /profile now writes for manual-only users.
+    """
+    if user.resume_text:
+        return False
+    roles = (user.desired_roles or "").strip()
+    locations = _profile_locations(user)
+    skills = _skills_from_user(user)
+    if not roles or not locations or not skills or not _has_profile_experience(user):
+        return False
+    exp_parts = []
+    if user.experience_years is not None:
+        exp_parts.append(f"{user.experience_years} years")
+    if user.experience_months is not None:
+        exp_parts.append(f"{user.experience_months} months")
+    experience = " ".join(exp_parts) or "provided"
+    user.resume_text = (
+        "Manual profile completed. "
+        f"Desired roles: {roles}. "
+        f"Preferred locations: {', '.join(locations)}. "
+        f"Total experience: {experience}. "
+        f"Skills: {', '.join(skills)}."
+    )
+    return True
+
+
 def _experience_level_for_user(user: User, selected: str | None = None) -> str:
     return normalize_experience(selected) or experience_from_user(user)
 
@@ -421,6 +456,7 @@ async def _live_quality_topup(user: User, profile: JobSearchProfile, db: AsyncSe
 
 
 async def _ensure_recommendation_profile(user: User, db: AsyncSession) -> JobSearchProfile | None:
+    _ensure_manual_resume_text(user)
     roles = (user.desired_roles or "").strip()
     locations = _profile_locations(user)
     if not roles or not locations or not user.resume_text:

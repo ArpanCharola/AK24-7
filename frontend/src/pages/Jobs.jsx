@@ -47,9 +47,17 @@ function profileExperience(profile) {
   return "senior";
 }
 
+function hasProfileExperience(profile) {
+  return profile?.experience_years != null || profile?.experience_months != null;
+}
+
 function hasRecommendationProfile(profile) {
+  const desiredRoles = asList(profile?.desired_roles);
+  const locations = asList(profile?.preferred_locations);
+  const skills = asList(profile?.skills);
+  const hasProfileBase = Boolean(profile?.resume_text) || (skills.length > 0 && hasProfileExperience(profile));
   return Boolean(
-    profile?.resume_text && asList(profile?.desired_roles).length > 0 && asList(profile?.preferred_locations).length > 0
+    hasProfileBase && desiredRoles.length > 0 && locations.length > 0
   );
 }
 
@@ -201,6 +209,7 @@ export default function Jobs() {
   const { data: profile, isLoading: profileLoading, isError: profileError } = useProfile();
   const locations = useMemo(() => asList(profile?.preferred_locations), [profile?.preferred_locations]);
   const desiredRoles = useMemo(() => asList(profile?.desired_roles), [profile?.desired_roles]);
+  const profileSkills = useMemo(() => asList(profile?.skills), [profile?.skills]);
   const profileReady = hasRecommendationProfile(profile);
   const defaultExperience = profileExperience(profile);
 
@@ -214,7 +223,8 @@ export default function Jobs() {
     searchDefaultsSeededRef.current = true;
   }, [defaultExperience, desiredRoles, experience, locations, profile, searchExperience]);
 
-  const completed = (profile?.resume_text ? 1 : 0) + (desiredRoles.length > 0 ? 1 : 0) + (locations.length > 0 ? 1 : 0);
+  const hasProfileBase = Boolean(profile?.resume_text) || (profileSkills.length > 0 && hasProfileExperience(profile));
+  const completed = (hasProfileBase ? 1 : 0) + (desiredRoles.length > 0 ? 1 : 0) + (locations.length > 0 ? 1 : 0);
 
   const filters = {
     role: role || undefined,
