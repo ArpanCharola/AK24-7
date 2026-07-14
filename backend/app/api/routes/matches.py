@@ -24,8 +24,10 @@ from app.models.user import User
 from app.models.discovered_job import DiscoveredJob
 from app.models.discovery_run import DiscoveryRun
 from app.models.job_search_profile import JobSearchProfile
+from app.models.job_warehouse import CanonicalJob, Employer, ProfileJobMatch
 from app.services.experience_filters import experience_from_user, is_experience_match, normalize_experience
 from app.services.india_locations import location_matches_preference
+from app.services.warehouse_views import canonical_dedupe_key, canonical_rank, explanation_from_codes, strict_location_match
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +210,31 @@ def _skills_from_user(user: User) -> list[str]:
 
 def _experience_level_for_user(user: User, selected: str | None = None) -> str:
     return normalize_experience(selected) or experience_from_user(user)
+
+
+def _warehouse_match_dedupe(rows: list[tuple[ProfileJobMatch, CanonicalJob, str | None]]) -> list[tuple[ProfileJobMatch, CanonicalJob, str | None]]:
+    best: dict[tuple[str, str, str] | tuple[str], tuple[ProfileJobMatch, CanonicalJob, str | None]] = {}
+    for row in rows:
+        match, job, employer_name = row
+        key = canonical_dedupe_key(
+            company=employer_name,
+            title=job.title,
+            location=job.location,
+            fallback_url=job.canonical_url,
+        )
+        if key not in best or canonical_rank(match.score, job.posted_at, match.matched_at) > canonical_rank(best[key][0].score, best[key][1].posted_at, best[key][0].matched_at):
+            best[key] = row
+    ordered = list(best.values())
+    ordered.sort(key=lambda row: canonical_rank(row[0].score, row[1].posted_at, row[0].matched_at), reverse=True)
+    return ordered
+
+
+def _salary_raw(job: CanonicalJob) -> str | None:
+    if job.salary_min and job.salary_max:
+        currency = job.salary_currency or "INR"
+        period = f"/{job.salary_period}" if job.salary_period else ""
+        return f"{currency} {job.salary_min:,.0f}-{job.salary_max:,.0f}{period}"
+    return None
 
 
 def _deterministic_score(job: dict, user: User, profile: JobSearchProfile) -> tuple[int, str]:
@@ -422,21 +449,29 @@ async def _ensure_recommendation_profile(user: User, db: AsyncSession) -> JobSea
 
 
 async def _visible_recommendation_count(user: User, db: AsyncSession, limit: int = 500) -> int:
+    profile = await _ensure_recommendation_profile(user, db)
+    if profile is None:
+        return 0
     preferred_locations = _profile_locations(user)
     experience_level = _experience_level_for_user(user)
     rows = (await db.execute(
-        select(DiscoveredJob).where(
-            DiscoveredJob.user_id == user.id,
-            DiscoveredJob.match_score.is_not(None),
-            DiscoveredJob.match_score >= 55,
-            DiscoveredJob.status != "skipped",
-            _location_condition(DiscoveredJob.location, preferred_locations),
+        select(ProfileJobMatch, CanonicalJob, Employer.name)
+        .join(CanonicalJob, CanonicalJob.id == ProfileJobMatch.canonical_job_id)
+        .join(Employer, Employer.id == CanonicalJob.employer_id)
+        .where(
+            ProfileJobMatch.profile_id == profile.id,
+            ProfileJobMatch.score >= 55,
+            CanonicalJob.status == "live",
         )
-        .order_by(DiscoveredJob.match_score.desc().nulls_last(), DiscoveredJob.discovered_at.desc())
+        .order_by(ProfileJobMatch.score.desc(), CanonicalJob.posted_at.desc())
         .limit(limit)
-    )).scalars().all()
-    rows = [row for row in rows if is_experience_match(row.title, row.job_description, experience_level)]
-    return len(_dedupe_rows(rows))
+    )).all()
+    visible = [
+        row for row in rows
+        if strict_location_match(row[1].location, preferred_locations, row[1].work_arrangement)
+        and is_experience_match(row[1].title, row[1].description, experience_level)
+    ]
+    return len(_warehouse_match_dedupe(visible))
 
 
 def _job_dict_from_row(row: DiscoveredJob) -> dict:
@@ -502,25 +537,32 @@ async def get_feed(
     db: AsyncSession = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
+    profile = await _ensure_recommendation_profile(current_user, db)
+    if profile is None:
+        return []
     preferred_locations = _profile_locations(current_user)
     experience_level = _experience_level_for_user(current_user, experience)
-    q = select(DiscoveredJob).where(
-        DiscoveredJob.user_id == current_user.id,
-        DiscoveredJob.match_score.is_not(None),
-        DiscoveredJob.status != "skipped",
+    q = (
+        select(ProfileJobMatch, CanonicalJob, Employer.name)
+        .join(CanonicalJob, CanonicalJob.id == ProfileJobMatch.canonical_job_id)
+        .join(Employer, Employer.id == CanonicalJob.employer_id)
+        .where(
+            ProfileJobMatch.profile_id == profile.id,
+            CanonicalJob.status == "live",
+        )
     )
 
     if preferred_locations or location:
-        q = q.where(_location_condition(DiscoveredJob.location, preferred_locations, location))
-    role_gate = _role_condition(DiscoveredJob.title, current_user.desired_roles, role)
+        q = q.where(_location_condition(CanonicalJob.location, preferred_locations, location))
+    role_gate = _role_condition(CanonicalJob.title, current_user.desired_roles, role)
     if role_gate is not None:
         q = q.where(role_gate)
     if source:
-        q = q.where(func.lower(DiscoveredJob.source) == source.lower())
+        q = q.where(func.lower(CanonicalJob.preferred_source) == source.lower())
     if work_arrangement and work_arrangement.lower() in {"remote", "hybrid", "onsite"}:
-        q = q.where(func.lower(DiscoveredJob.work_arrangement) == work_arrangement.lower())
+        q = q.where(func.lower(CanonicalJob.work_arrangement) == work_arrangement.lower())
     effective_min_score = min_score if min_score is not None else 55
-    q = q.where(DiscoveredJob.match_score >= effective_min_score)
+    q = q.where(ProfileJobMatch.score >= effective_min_score)
 
     # Freshness: explicit posted_within_days wins; else the bucket.
     days = posted_within_days
@@ -528,23 +570,46 @@ async def get_feed(
         days = 1 if freshness == "24h" else 7
     if days is not None:
         cutoff = now - timedelta(days=days)
-        q = q.where(or_(DiscoveredJob.posted_at >= cutoff, DiscoveredJob.posted_at.is_(None)))
+        q = q.where(or_(CanonicalJob.posted_at >= cutoff, CanonicalJob.posted_at.is_(None)))
 
     if sort == "recent":
-        q = q.order_by(DiscoveredJob.posted_at.desc().nulls_last(), DiscoveredJob.discovered_at.desc())
+        q = q.order_by(CanonicalJob.posted_at.desc().nulls_last(), ProfileJobMatch.matched_at.desc())
     else:
-        q = q.order_by(DiscoveredJob.match_score.desc().nulls_last(), DiscoveredJob.discovered_at.desc())
+        q = q.order_by(ProfileJobMatch.score.desc().nulls_last(), ProfileJobMatch.matched_at.desc())
 
     raw_limit = min(500, max(limit * 6, limit + offset + 100))
-    raw_rows = (await db.execute(q.limit(raw_limit))).scalars().all()
-    raw_rows = [row for row in raw_rows if is_experience_match(row.title, row.job_description, experience_level)]
-    rows = _dedupe_rows(raw_rows)[offset: offset + limit]
+    raw_rows = (await db.execute(q.limit(raw_limit))).all()
+    raw_rows = [
+        row for row in raw_rows
+        if strict_location_match(row[1].location, preferred_locations, row[1].work_arrangement)
+        and is_experience_match(row[1].title, row[1].description, experience_level)
+    ]
+    rows = _warehouse_match_dedupe(raw_rows)[offset: offset + limit]
 
     out: list[MatchResponse] = []
-    for row in rows:
-        model = MatchResponse.model_validate(row)
-        model.is_early_applicant = _is_early_applicant(row.posted_at, now)
-        out.append(model)
+    for match, job, employer_name in rows:
+        reason, explanation = explanation_from_codes(match.explanation_codes)
+        out.append(MatchResponse(
+            id=match.id,
+            job_url=job.canonical_url or "",
+            title=job.title,
+            company=employer_name,
+            location=job.location,
+            source=job.preferred_source or "warehouse",
+            match_score=round(match.score),
+            match_reason=reason,
+            match_explanation=explanation,
+            missing_skills=[],
+            salary_raw=_salary_raw(job),
+            work_arrangement=job.work_arrangement,
+            posted_at=job.posted_at,
+            discovered_at=match.matched_at,
+            status=match.state,
+            contact_email=None,
+            contact_linkedin=None,
+            contact_name=None,
+            is_early_applicant=_is_early_applicant(job.posted_at, now),
+        ))
     return out
 
 
@@ -579,35 +644,22 @@ async def refresh_feed(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.agents.job_discovery_agent import seed_user_feed_from_pool
-    from app.services.aggregation import ensure_profile_demand
+    from app.services.aggregation import ensure_profile_demand, refresh_cluster_matches
 
     seeded = 0
-    scored = 0
+    refreshed = 0
     background_queued = False
     profile = await _ensure_recommendation_profile(current_user, db)
     if profile is not None:
-        profile_dict = {
-            "target_roles": profile.target_roles,
-            "locations": profile.locations,
-            "keywords": profile.keywords,
-            "experience_level": profile.experience_level,
-            "work_arrangements": profile.work_arrangements,
-            "excluded_companies": profile.excluded_companies,
-        }
-        seeded = await seed_user_feed_from_pool(
-            current_user.id, profile_dict, search_profile_id=profile.id, limit=250,
-            strict_locations=True,
-        )
-        scored = await _score_existing_feed_rows(current_user, profile, db)
         cluster = await ensure_profile_demand(profile, db, user=current_user)
         cluster.status = "queued"
         cluster.priority = max(cluster.priority, 150)
         await db.commit()
+        refreshed = await refresh_cluster_matches(cluster.id, db)
         background_queued = True
 
     return {
-        "refreshed": scored,
+        "refreshed": refreshed,
         "seeded": seeded,
         "returned": await _visible_recommendation_count(current_user, db),
         "background_queued": background_queued,

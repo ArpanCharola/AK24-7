@@ -21,6 +21,7 @@ from app.services.india_locations import location_matches_preference
 from app.models.job_search_profile import JobSearchProfile
 from app.models.user import User
 from app.models.discovered_job import DiscoveredJob
+from app.models.job_pool import JobPool
 from app.models.job_warehouse import (
     AggregationRun, CanonicalJob, DemandCluster, Employer, JobRejection,
     JobSourceSighting, ProfileDemandMembership, ProfileJobMatch, SourceRunMetric,
@@ -228,6 +229,30 @@ async def _persist_candidate(db, candidate, run: AggregationRun) -> tuple[Canoni
             existing.last_seen_at = now; existing.observed_at = now; existing.aggregation_run_id = run.id
         else:
             db.add(JobSourceSighting(canonical_job_id=job.id, aggregation_run_id=run.id, source=sighting.source, source_native_id=sighting.source_native_id, source_url=sighting.source_url, source_url_hash=shash, observed_metadata={"title": candidate.title, "company": candidate.employer}, source_posted_at=candidate.posted_at)); new_sightings += 1
+    pool_row = (await db.execute(select(JobPool).where(JobPool.job_url == candidate.canonical_url))).scalar_one_or_none()
+    if pool_row is None:
+        db.add(JobPool(
+            job_url=candidate.canonical_url,
+            title=candidate.title,
+            company=employer.name,
+            location=candidate.location,
+            job_description=candidate.description or None,
+            source=job.preferred_source or candidate.sightings[0].source,
+            work_arrangement=job.work_arrangement,
+            posted_at=candidate.posted_at,
+            first_seen_at=now,
+            last_seen_at=now,
+            search_query=job.role_family,
+        ))
+    else:
+        pool_row.title = candidate.title or pool_row.title
+        pool_row.company = employer.name or pool_row.company
+        pool_row.location = candidate.location or pool_row.location
+        pool_row.job_description = pool_row.job_description or candidate.description or None
+        pool_row.source = job.preferred_source or pool_row.source
+        pool_row.work_arrangement = job.work_arrangement or pool_row.work_arrangement
+        pool_row.posted_at = candidate.posted_at or pool_row.posted_at
+        pool_row.last_seen_at = now
     return job, created, new_sightings
 
 

@@ -22,7 +22,6 @@ For multi-worker scaling, swap in slowapi + Redis backend.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import time
@@ -31,7 +30,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlsplit
 
-import httpx
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -48,11 +46,10 @@ from app.models.user import User
 from app.services.experience_filters import (
     FRESHER_TERMS,
     ROLE_QUERY_ALIASES,
-    fresher_search_roles,
     is_experience_match,
     normalize_experience,
 )
-from app.services.serpapi_jobs import search_serpapi_jobs
+from app.services.warehouse_views import public_job_quality_score
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -358,52 +355,14 @@ def _row_quality_score(row: JobPool, *, role: str | None, experience_filter: str
     title = (row.title or "").lower()
     company = (row.company or "").lower()
     url = (row.job_url or "").lower()
-    description = (row.job_description or "").lower()
-    score = 0.0
-
-    if role:
-        role_key = role.lower().strip()
-        aliases = ROLE_QUERY_ALIASES.get(role_key, [role])
-        alias_lows = [alias.lower() for alias in aliases]
-        if any(alias in title for alias in alias_lows):
-            score += 35
-        if role_key in title:
-            score += 12
-        if role_key.replace("developer", "engineer") in title:
-            score += 5
-
-    if normalize_experience(experience_filter) == "fresher":
-        combined = f"{title} {description}"
-        if any(term in combined for term in FRESHER_TERMS):
-            score += 14
-        if any(term in title for term in ("junior", "entry", "fresher", "graduate", "trainee", "associate")):
-            score += 8
-
-    source_weight = {
-        "greenhouse": 13,
-        "lever": 13,
-        "ashby": 13,
-        "workday": 11,
-        "company_site": 10,
-        "instahyre": 9,
-        "linkedin": 8,
-        "indeed": 7,
-        "google_jobs": 6,
-    }
-    score += source_weight.get((row.source or "").lower(), 4)
-
-    posted = row.posted_at
-    if posted:
-        if posted.tzinfo is None:
-            posted = posted.replace(tzinfo=timezone.utc)
-        age_days = (datetime.now(timezone.utc) - posted).total_seconds() / 86400
-        if age_days <= 1:
-            score += 12
-        elif age_days <= 3:
-            score += 8
-        elif age_days <= 7:
-            score += 4
-
+    score = public_job_quality_score(
+        title=row.title,
+        source=row.source,
+        posted_at=row.posted_at,
+        now=datetime.now(timezone.utc),
+        role=role,
+        experience_filter=experience_filter,
+    )
     if re.search(r"\b(seo|digital marketing|wordpress designer|data analyst)\b", title):
         score -= 14
     if "javabykiran" in url or "placements/latest-job-opening" in url or "training" in company:
@@ -458,193 +417,18 @@ async def public_search(
     ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Unauthenticated live job search. Calls SerpAPI, filters to known ATS
-    hosts, upserts into the shared JobPool, returns the rows it just saved."""
+    """Unauthenticated cached job search.
+
+    Reads the shared pool immediately so user search never blocks on a live
+    scrape. The background warehouse and scheduled supply runs own fetching.
+    """
     await _rate_limit(_client_ip(request), "search", max_calls=10, window_sec=60)
 
     experience_filter = normalize_experience(experience)
     work_filter = (work_arrangement or "").strip().lower() or None
     if work_filter not in {"remote", "hybrid", "onsite", None}:
         work_filter = None
-    search_roles = (fresher_search_roles(role, experience_filter) or [role.strip()])[:5]
-
-    profile_for_serpapi = {
-        "target_roles": role,
-        "locations": location,
-        "posted_within_days": posted_within_days,
-    }
     cached_rows = await _matching_pool_rows(
-        db,
-        role=role,
-        location=location,
-        experience_filter=experience_filter,
-        work_filter=work_filter,
-        source=source,
-        posted_within_days=posted_within_days,
-        limit=50,
-    )
-    # Search should never feel frozen when we already have valid warehouse rows.
-    # Background supply/backfill is responsible for growing volume; the user's
-    # click should return the current best set immediately instead of waiting on
-    # live portals that may be blocked or slow.
-    if cached_rows:
-        return PublicSearchResponse(
-            query=role,
-            location=location,
-            source_filter=source,
-            experience_filter=experience_filter,
-            work_arrangement_filter=work_filter,
-            fetched=0,
-            matched=0,
-            saved=0,
-            jobs=[PublicJobResponse.model_validate(r) for r in cached_rows],
-        )
-
-    # Run SerpAPI (broad aggregator) and direct ATS API scrapes (Greenhouse +
-    # Ashby) IN PARALLEL. The ATS scrapes return direct ATS URLs — the kind
-    # SerpAPI almost never surfaces. quick_ats_search caps at ~3-5s.
-    # Re-use the same India / job-type filters the authed discovery uses so
-    # the pool holds the same quality bar.
-    from app.agents.job_discovery_agent import (
-        quick_ats_search,
-        _is_india_strict,
-        _is_excluded_job,
-        _matches_criteria,
-    )
-
-    per_query_pages = max(1, min(pages, (pages + max(len(search_roles), 1) - 1) // max(len(search_roles), 1)))
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        serpapi_tasks = [
-            search_serpapi_jobs(
-                client,
-                {**profile_for_serpapi, "search_query": search_role},
-                posted_within_days,
-                max_pages=per_query_pages,
-            )
-            for search_role in search_roles
-        ]
-        ats_tasks = [quick_ats_search(role, posted_within_days)]
-        # return_exceptions so a failure in one source never discards the other's
-        # results (e.g. a SerpAPI hiccup must not throw away the ATS scrape).
-        results = await asyncio.gather(*serpapi_tasks, *ats_tasks, return_exceptions=True)
-        raw_serpapi: list[dict] = []
-        ats_jobs: list[dict] = []
-        for idx, result in enumerate(results):
-            if isinstance(result, Exception):
-                continue
-            if idx < len(serpapi_tasks):
-                raw_serpapi.extend(result)
-            else:
-                ats_jobs.extend(result)
-        labels = [f"serpapi:{item}" for item in search_roles] + [f"ats:{role}"]
-        for label, r in zip(labels, results):
-            if isinstance(r, Exception):
-                logger.warning("Public search %s source failed: %s", label, r)
-
-    matched: list[dict] = []
-
-    # SerpAPI results need URL/source post-processing (Google Jobs sends
-    # aggregator wrappers; pick the most-direct option from apply_options).
-    for j in raw_serpapi:
-        best = _best_apply_url(j.get("apply_options") or [])
-        if best:
-            j["job_url"], src = best
-        else:
-            src = _classify_source(j.get("job_url", ""))
-        if not src:
-            continue
-        if source and src != source:
-            continue
-        j["source"] = src
-        matched.append(j)
-
-    # ATS scrapers already produce normalized direct URLs + tagged sources.
-    # Just apply the optional source filter.
-    for j in ats_jobs:
-        if source and j.get("source") != source:
-            continue
-        matched.append(j)
-
-    # ── Quality filters (same as the authed discovery flow) ────────────────
-    # India-only + drop internships / part-time / staffing before the
-    # rows hit the pool. Saves on storage + every browse downstream.
-    before_filters = len(matched)
-    matched = [
-        j for j in matched
-        if _is_india_strict(j.get("location"))
-        and not _is_excluded_job(j.get("title", ""), j.get("company", ""), j.get("job_url", ""))
-        and is_experience_match(j.get("title"), j.get("job_description"), experience_filter)
-        and (not work_filter or (j.get("work_arrangement") or "").lower() == work_filter)
-    ]
-    dropped_by_filters = before_filters - len(matched)
-
-    raw_jobs = raw_serpapi + ats_jobs
-    logger.info(
-        "Public search role=%r location=%r source=%r: "
-        "SerpAPI=%d, ATS direct=%d, post-source=%d, post-quality=%d (dropped %d)",
-        role, location, source,
-        len(raw_serpapi), len(ats_jobs), before_filters, len(matched), dropped_by_filters,
-    )
-
-    # ── Dedupe within the batch by job_url ────────────────────────────────────
-    # The same posting can arrive from BOTH SerpAPI (apply_options) and the
-    # direct ATS scrape — most commonly a Greenhouse job. Two new rows with the
-    # same job_url violate the UNIQUE(job_url) constraint and abort the entire
-    # commit, so the whole search would persist nothing. Collapse duplicates
-    # first, preferring the direct ATS row (clean URL + full description).
-    deduped: dict[str, dict] = {}
-    for j in matched:
-        url = j.get("job_url")
-        if not url:
-            continue
-        prev = deduped.get(url)
-        if prev is None or (not prev.get("job_description") and j.get("job_description")):
-            deduped[url] = j
-    matched = list(deduped.values())
-
-    # ── Upsert into pool ────────────────────────────────────────────────────
-    now = datetime.now(timezone.utc)
-    urls = [j["job_url"] for j in matched if j.get("job_url")]
-    existing: dict[str, JobPool] = {}
-    if urls:
-        rows = await db.execute(select(JobPool).where(JobPool.job_url.in_(urls)))
-        existing = {r.job_url: r for r in rows.scalars().all()}
-
-    saved_objs: list[JobPool] = []
-    for j in matched:
-        url = j.get("job_url")
-        if not url:
-            continue
-        if url in existing:
-            row = existing[url]
-            row.last_seen_at = now
-            # Refresh metadata in case the posting was edited
-            row.title = j.get("title") or row.title
-            row.company = j.get("company") or row.company
-            row.location = j.get("location") or row.location
-            row.work_arrangement = j.get("work_arrangement") or row.work_arrangement
-            if j.get("posted_at"):
-                row.posted_at = j["posted_at"]
-            saved_objs.append(row)
-        else:
-            row = JobPool(
-                job_url=url,
-                title=j.get("title"),
-                company=j.get("company"),
-                location=j.get("location"),
-                job_description=j.get("job_description"),
-                source=j["source"],
-                work_arrangement=j.get("work_arrangement"),
-                posted_at=j.get("posted_at"),
-                search_query=role,
-            )
-            db.add(row)
-            saved_objs.append(row)
-    await db.commit()
-    for row in saved_objs:
-        await db.refresh(row)
-
-    response_rows = await _matching_pool_rows(
         db,
         role=role,
         location=location,
@@ -654,17 +438,16 @@ async def public_search(
         posted_within_days=posted_within_days,
         limit=100,
     )
-
     return PublicSearchResponse(
         query=role,
         location=location,
         source_filter=source,
         experience_filter=experience_filter,
         work_arrangement_filter=work_filter,
-        fetched=len(raw_jobs),
-        matched=len(matched),
-        saved=len(saved_objs),
-        jobs=[PublicJobResponse.model_validate(r) for r in response_rows],
+        fetched=0,
+        matched=len(cached_rows),
+        saved=0,
+        jobs=[PublicJobResponse.model_validate(r) for r in cached_rows],
     )
 
 
