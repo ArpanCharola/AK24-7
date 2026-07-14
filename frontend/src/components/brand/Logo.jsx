@@ -99,10 +99,9 @@ export default function Logo({ variant = "ak-emblem", size = 36, className = "",
   );
 }
 
-export function Wordmark({ variant = "ak-emblem", size = 34, tagline = "Jobs in India", className = "" }) {
+export function Wordmark({ variant: _variant = "ak-emblem", size: _size = 34, tagline = "Jobs in India", className = "" }) {
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
-      <Logo variant={variant} size={size} />
+    <div className={`flex items-center ${className}`}>
       <div className="flex flex-col leading-none">
         <span className="text-[18px] font-semibold tracking-[-0.03em] text-slate-950">
           AK<span className="text-brand">24/7</span> Jobs

@@ -1,19 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="akBrand" x1="12" y1="10" x2="52" y2="54" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7C3AED" />
-      <stop offset="1" stop-color="#1D4ED8" />
+    <linearGradient id="bg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F172A" />
+      <stop offset="0.48" stop-color="#2563EB" />
+      <stop offset="1" stop-color="#7C3AED" />
+    </linearGradient>
+    <linearGradient id="shine" x1="18" y1="10" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.9" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
     </linearGradient>
   </defs>
-  <rect x="4" y="4" width="56" height="56" rx="18" fill="#0F172A" />
-  <rect x="4" y="4" width="56" height="56" rx="18" stroke="url(#akBrand)" stroke-width="2.2" />
-  <rect x="9" y="9" width="46" height="46" rx="14" stroke="rgba(248,250,252,0.10)" stroke-width="1.4" />
-  <circle cx="45" cy="18" r="10" fill="url(#akBrand)" opacity="0.18" />
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="5.2">
-    <path d="M16 42 L27 16 L38 42" stroke="#F8FAFC" />
-    <path d="M21 30 H33" stroke="#F8FAFC" />
-    <path d="M41 16 V42" stroke="#F8FAFC" />
-    <path d="M41 29 L52 16" stroke="url(#akBrand)" />
-    <path d="M41 29 L52 42" stroke="url(#akBrand)" />
-  </g>
+  <rect x="5" y="5" width="54" height="54" rx="16" fill="url(#bg)" />
+  <path d="M16 18C20 13 27 11 34 13C43 15 50 22 51 31C52 42 44 51 32 51C21 51 13 44 13 34C13 29 15 25 19 22" fill="none" stroke="#FFFFFF" stroke-opacity="0.26" stroke-width="3" stroke-linecap="round" />
+  <path d="M38 12L27 33H39L28 52" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M14 44L21 31H14L22 18" fill="none" stroke="#C7D2FE" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M12 11H45C50 11 53 14 53 19V22C42 18 31 18 20 23C15 25 11 28 8 32V15C8 13 10 11 12 11Z" fill="url(#shine)" opacity="0.24" />
 </svg>
