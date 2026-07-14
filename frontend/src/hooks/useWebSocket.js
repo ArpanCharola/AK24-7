@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { wsBaseUrl } from "../lib/runtime-config";
 
-const WS_BASE = import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws";
+const WS_BASE = wsBaseUrl();
 
 export function useAgentWebSocket(jobId) {
   const ws = useRef(null);

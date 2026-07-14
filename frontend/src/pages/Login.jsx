@@ -14,9 +14,10 @@ import {
 import { authApi } from "../services/api";
 import SetCredentialsModal from "../components/SetCredentialsModal";
 import { Wordmark } from "../components/brand/Logo";
+import { apiBaseUrl } from "../lib/runtime-config";
 
 const BRAND_VARIANT = "ak-emblem";
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const API_BASE = apiBaseUrl();
 const GOOGLE_LOGIN_URL = `${API_BASE}/email/login`;
 
 const FEATURES = [
