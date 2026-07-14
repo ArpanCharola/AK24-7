@@ -520,7 +520,7 @@ h1, h2, h3, h4 {
 .dark .text-accent-700                          { color: #e4e4e7; }
 
 .dark .border-sky-200\/60     { border-color: rgba(14, 165, 233, 0.30); }
-.dark .border-violet-200\/60  { border-color: rgba(139, 92, 246, 0.30); }
+.dark .border-violet-200\/60  { border-color: rgba(139, 92, 246, 0.302); }
 .dark .border-amber-200\/60   { border-color: rgba(245, 158, 11, 0.30); }
 .dark .border-rose-200\/60    { border-color: rgba(244, 63, 94, 0.30); }
 .dark .border-indigo-200\/60  { border-color: rgba(99, 102, 241, 0.30); }
@@ -876,6 +876,13 @@ h1, h2, h3, h4 {
 .body-brand-grid { background-image: radial-gradient(hsl(var(--foreground) / .055) .55px, transparent .65px); background-size: 9px 9px; }
 .app-main { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
 .email-workspace { min-height: 0; }
+.brand-favicon {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: 0 8px 22px -14px hsl(var(--brand-2) / 0.65);
+}
 @media (min-width: 1024px) {
   .email-workspace {
     align-items: stretch;
