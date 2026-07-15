@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Search, SlidersHorizontal, Sparkles } from "lucide-react";
-import { matchesApi, publicJobsApi } from "../services/api";
+import { apiErrorMessage, matchesApi, publicJobsApi } from "../services/api";
 import { useProfile } from "../hooks/useProfile";
 import JobMatchCard from "../components/Jobs/JobMatchCard";
 import ProfileGate from "../components/Profile/ProfileGate";
@@ -52,6 +52,7 @@ function hasProfileExperience(profile) {
 }
 
 function hasRecommendationProfile(profile) {
+  if (typeof profile?.recommendation_ready === "boolean") return profile.recommendation_ready;
   const desiredRoles = asList(profile?.desired_roles);
   const locations = asList(profile?.preferred_locations);
   const skills = asList(profile?.skills);
@@ -224,7 +225,7 @@ export default function Jobs() {
   }, [defaultExperience, desiredRoles, experience, locations, profile, searchExperience]);
 
   const hasProfileBase = Boolean(profile?.resume_text) || (profileSkills.length > 0 && hasProfileExperience(profile));
-  const completed = (hasProfileBase ? 1 : 0) + (desiredRoles.length > 0 ? 1 : 0) + (locations.length > 0 ? 1 : 0);
+  const completed = profile?.recommendation_completed ?? ((hasProfileBase ? 1 : 0) + (desiredRoles.length > 0 ? 1 : 0) + (locations.length > 0 ? 1 : 0));
 
   const filters = {
     role: role || undefined,
@@ -503,7 +504,10 @@ export default function Jobs() {
             </div>
           ) : searchMutation.isError ? (
             <div className="rounded-[28px] border border-warning/40 bg-warning/10 px-4 py-6 text-center text-[13px] text-warning">
-              Search could not complete right now. Try a narrower role or location.
+              <p>{apiErrorMessage(searchMutation.error, "Search could not complete right now.")}</p>
+              <button type="button" onClick={() => searchMutation.mutate()} className="btn-secondary mt-3 !rounded-full !px-4 !py-2 text-[12px]">
+                Retry search
+              </button>
             </div>
           ) : !searchRan ? (
             <div className="flex flex-col items-center justify-center rounded-[28px] border border-dashed border-border bg-card/60 py-14 text-center">

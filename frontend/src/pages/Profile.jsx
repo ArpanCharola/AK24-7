@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, Loader2, UploadCloud } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw, UploadCloud } from "lucide-react";
 import { useProfile, useUpdateProfile, useImportResume } from "../hooks/useProfile";
 import CityMultiSelect from "../components/Profile/CityMultiSelect";
+import { apiErrorMessage } from "../services/api";
 
 const COMMON_ROLES = [
   "Software Engineer",
@@ -72,7 +73,7 @@ function Field({ label, children }) {
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { data: profile } = useProfile();
+  const { data: profile, isLoading: profileLoading, isError: profileError, error: profileLoadError, refetch: refetchProfile, isFetching: profileFetching } = useProfile();
   const { mutateAsync: save, isPending, isSuccess } = useUpdateProfile();
   const { mutateAsync: importResume, isPending: importing } = useImportResume();
   const [form, setForm] = useState(EMPTY_FORM);
@@ -231,7 +232,7 @@ export default function Profile() {
         setSavedPrompt(true);
       }
     } catch (error) {
-      setSaveError(error?.response?.data?.detail || "Profile could not be saved. Please check the fields and try again.");
+      setSaveError(apiErrorMessage(error, "Profile could not be saved. Please check the fields and try again."));
     }
   }
 
@@ -250,6 +251,30 @@ export default function Profile() {
   const done = required.filter(Boolean).length;
   const pct = Math.round((done / 5) * 100);
   const barColor = pct >= 100 ? "bg-success" : pct >= 60 ? "bg-warning" : "bg-danger";
+
+  if (profileLoading) {
+    return (
+      <div className="route-loader route-loader--contained" role="status">
+        <div className="route-loader__content">
+          <Loader2 size={28} className="animate-spin text-brand" />
+          <span className="posted-stamp">LOADING YOUR PROFILE</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (profileError) {
+    return (
+      <div className="route-error" role="alert">
+        <strong>Your profile couldn't be loaded.</strong>
+        <p>{apiErrorMessage(profileLoadError, "Your saved profile is still safe. Retry to load it before editing.")}</p>
+        <button type="button" className="btn-primary" onClick={() => refetchProfile()} disabled={profileFetching}>
+          <RefreshCw size={15} className={profileFetching ? "animate-spin" : ""} />
+          {profileFetching ? "Retrying..." : "Retry profile"}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 w-full max-w-3xl mx-auto">
