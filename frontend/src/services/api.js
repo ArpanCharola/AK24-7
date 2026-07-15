@@ -5,6 +5,36 @@ const api = axios.create({
   baseURL: apiBaseUrl(),
 });
 
+export class InvalidApiResponseError extends Error {
+  constructor(response) {
+    super("The server returned the website shell instead of API data.");
+    this.name = "InvalidApiResponseError";
+    this.code = "ERR_INVALID_API_RESPONSE";
+    this.response = response;
+    this.userMessage = "Production API routing is unavailable. Please retry after the service reconnects.";
+  }
+}
+
+function isHtmlResponse(response) {
+  const contentType = String(response?.headers?.["content-type"] || "").toLowerCase();
+  const data = response?.data;
+  return contentType.includes("text/html") || (
+    typeof data === "string" && /<(?:!doctype|html)\b/i.test(data.slice(0, 200))
+  );
+}
+
+export function apiErrorMessage(error, fallback = "The request could not be completed. Please try again.") {
+  if (error?.userMessage) return error.userMessage;
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item) => item?.msg).filter(Boolean);
+    if (messages.length) return messages.join(" ");
+  }
+  if (!error?.response) return "The API could not be reached. It may be waking up; wait a moment and retry.";
+  return fallback;
+}
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -16,7 +46,10 @@ api.interceptors.request.use((config) => {
 const PUBLIC_PATHS = ["/login"];
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    if (isHtmlResponse(res)) throw new InvalidApiResponseError(res);
+    return res;
+  },
   (err) => {
     if (err.response?.status === 401) {
       const hadToken = !!localStorage.getItem("token");

@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -47,9 +47,14 @@ class ProfileResponse(BaseModel):
     skills: list[str] = []
     projects: list[dict] = []
     certifications: list[dict] = []
+    recommendation_ready: bool = False
+    recommendation_completed: int = 0
+    recommendation_required: int = 3
 
 
 class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     full_name: str | None = None
     phone: str | None = None
     location: str | None = None
@@ -118,8 +123,21 @@ def _parse_locations(raw: str | None) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
+def _profile_readiness(user: User) -> tuple[bool, int]:
+    skills = _clean_list(user.skills)
+    has_experience = user.experience_years is not None or user.experience_months is not None
+    has_profile_base = bool(user.resume_text) or bool(skills and has_experience)
+    completed = sum((
+        has_profile_base,
+        bool(_clean_list(user.desired_roles)),
+        bool(_parse_locations(user.preferred_locations)),
+    ))
+    return completed == 3, completed
+
+
 def _profile_response(user: User) -> ProfileResponse:
     structured = load_structured_profile(user)
+    recommendation_ready, recommendation_completed = _profile_readiness(user)
     return ProfileResponse(
         id=user.id,
         email=user.email,
@@ -143,6 +161,9 @@ def _profile_response(user: User) -> ProfileResponse:
         skills=structured["skills"],
         projects=structured["projects"],
         certifications=structured["certifications"],
+        recommendation_ready=recommendation_ready,
+        recommendation_completed=recommendation_completed,
+        recommendation_required=3,
     )
 
 

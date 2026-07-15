@@ -27,3 +27,5 @@ def test_alembic_revision_graph_is_resolvable():
                 f"Revision {rev.revision} points to missing parent {parent}. "
                 "Use the actual Alembic revision id, not the migration filename."
             )
+
+    assert heads == ["0019_production_reconcile"]
