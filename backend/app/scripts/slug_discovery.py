@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 import re
@@ -150,7 +150,7 @@ async def harvest_common_crawl(client: httpx.AsyncClient, limit_per_pattern: int
                 if slug:
                     out[ats].add(slug)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("CC harvest %s/%s failed: %s", ats, url_q, repr(exc)[:120])
+            logger.warning("CC harvest %s/%s failed: %s", ats, domain, repr(exc)[:120])
         await asyncio.sleep(0.5)
     logger.info("Common Crawl harvest: %s", {k: len(v) for k, v in out.items() if v})
     return out
@@ -165,15 +165,30 @@ def _load_json(path: Path) -> dict:
         return {}
 
 
+# Corporate suffixes that never appear in an ATS slug. "Acme Technologies Pvt
+# Ltd" registers its board as `acme`, not `acmetechnologiespvtltd`.
+_CORP_SUFFIX_RE = re.compile(
+    r"\b(pvt|private|ltd|limited|llp|inc|incorporated|corp|corporation|co|"
+    r"technologies|technology|labs|solutions|services|systems|software|"
+    r"global|india|consulting|ventures|group|holdings)\b",
+    re.I,
+)
+
+
 def _name_to_slugs(name: str) -> list[str]:
-    """A company name → candidate slug forms: concatenated + hyphenated."""
+    """A company name → candidate slug forms: concatenated + hyphenated, both
+    with and without corporate suffixes (the boards use the bare brand)."""
     low = name.strip().lower()
-    concat = re.sub(r"[^a-z0-9]", "", low)
-    hyph = re.sub(r"[^a-z0-9]+", "-", low).strip("-")
-    out = []
-    for c in (concat, hyph):
-        if c and len(c) >= 2 and c not in out:
-            out.append(c)
+    stripped = _CORP_SUFFIX_RE.sub(" ", low).strip()
+    out: list[str] = []
+    for base in (low, stripped):
+        if not base:
+            continue
+        concat = re.sub(r"[^a-z0-9]", "", base)
+        hyph = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+        for c in (concat, hyph):
+            if c and len(c) >= 2 and c not in out:
+                out.append(c)
     return out
 
 
@@ -246,6 +261,37 @@ def _next_status(existing_status: str, india: int, dead_checks: int) -> tuple[st
     return "dead", new_checks
 
 
+# A board that answers but lists no India roles is future supply, not a broken
+# endpoint. Re-probe it monthly instead of discarding it the way `dead` does.
+_NO_INDIA_RECHECK_DAYS = 30
+
+
+def _next_probe_state(status: str, total: int, india: int) -> tuple[str, datetime | None]:
+    """Map a probe result onto (probe_state, next_probe_at).
+
+    `status` is the legacy verdict from _next_status, which collapses "endpoint
+    is gone" and "endpoint works but has no India roles" into `dead`. The queue
+    keeps them apart so a hiring freeze doesn't permanently burn a good slug.
+    """
+    if status == "active":
+        return "active", None
+    if total > 0:
+        return "no_india", datetime.now(timezone.utc) + timedelta(days=_NO_INDIA_RECHECK_DAYS)
+    return "dead", None
+
+
+def _country_hint(total: int, india: int) -> str | None:
+    """Mark boards that are demonstrably India-centric.
+
+    Threshold is deliberate: at >=40% India-explicit roles, an *unlabelled*
+    posting on the same board is far more likely India than not, which is what
+    lets the admission policy admit blank locations without guessing wildly.
+    """
+    if total <= 0:
+        return None
+    return "IN" if (india / total) >= 0.4 else None
+
+
 async def _upsert(session, ats: str, slug: str, total: int, india: int,
                   company: str | None, source: str, config: dict | None = None) -> str:
     now = datetime.now(timezone.utc)
@@ -255,15 +301,19 @@ async def _upsert(session, ats: str, slug: str, total: int, india: int,
 
     if row is None:
         status, checks = _next_status("unverified", india, 0)
+        probe_state, next_probe = _next_probe_state(status, total, india)
         session.add(CompanySource(
             ats=ats, slug=slug, company_name=company, status=status,
             india_roles_count=india, total_roles_count=total,
             last_validated_at=now, last_seen_active_at=now if status == "active" else None,
             source_of_discovery=source, consecutive_dead_checks=checks, config_json=config,
+            probe_state=probe_state, next_probe_at=next_probe,
+            country_hint=_country_hint(total, india), probe_leased_until=None,
         ))
         return status
 
     status, checks = _next_status(row.status, india, row.consecutive_dead_checks)
+    probe_state, next_probe = _next_probe_state(status, total, india)
     row.total_roles_count = total
     row.india_roles_count = india
     if company:
@@ -271,6 +321,12 @@ async def _upsert(session, ats: str, slug: str, total: int, india: int,
     row.last_validated_at = now
     row.status = status
     row.consecutive_dead_checks = checks
+    row.probe_state = probe_state
+    row.next_probe_at = next_probe
+    row.probe_leased_until = None
+    hint = _country_hint(total, india)
+    if hint:
+        row.country_hint = hint
     if status == "active":
         row.last_seen_active_at = now
     if config and not row.config_json:

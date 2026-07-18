@@ -8,7 +8,7 @@ from app.core.database import init_db
 from app.core.bootstrap import ensure_admin
 from app.core.scheduler import start_scheduler, shutdown_scheduler
 import app.models  # registers all models with SQLAlchemy before any query runs
-from app.api.routes import auth, applications, otp, profile, job_searches, discovered_jobs, email, mail_tracker, saved_applications, dashboard, public_jobs, admin, matches
+from app.api.routes import auth, applications, otp, profile, job_searches, discovered_jobs, email, mail_tracker, saved_applications, dashboard, public_jobs, admin, matches, internal_tasks
 from app.api.websocket import ws_router
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,8 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"]
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 # Public + pool: GET /api/public/{job-search,jobs} unauth, POST /api/public/import-to-profile/{id} authed
 app.include_router(public_jobs.router, prefix="/api/public", tags=["public-jobs"])
+# Supply ticks driven by an external scheduler; 404 until INTERNAL_TASK_TOKEN set.
+app.include_router(internal_tasks.router, prefix="/api/internal", tags=["internal"])
 app.include_router(ws_router, prefix="/ws", tags=["websocket"])
 
 # Orion copilot (stream A4) — auto-registers once the router module exists.

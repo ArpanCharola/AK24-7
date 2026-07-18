@@ -15,21 +15,11 @@ services:
     ports:
       - "6379:6379"
 
-  api:
-    image: ak247-backend-resume-ocr
-    env_file: ./backend/.env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ai_apply
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      ENABLE_SCHEDULER: "false"
-    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    ports:
-      - "8000:8000"
-    depends_on:
-      - postgres
-      - redis
+# NOTE: Local dev runs the backend as a manual uvicorn from backend/ (see
+# CLAUDE.md), NOT in Docker. An `api` service used to live here running a stale
+# baked image (`ak247-backend-resume-ocr`) that bound :8000 and shadowed the
+# dev server, so every code change silently did nothing. Compose now brings up
+# infra only. Prod builds from backend/Dockerfile.prod, unaffected by this file.
 
 volumes:
   postgres_data:

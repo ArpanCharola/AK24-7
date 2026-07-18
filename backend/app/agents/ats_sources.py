@@ -25,6 +25,7 @@ from app.agents.job_discovery_agent import (
     _matches_criteria,
     _normalize,
     _parse_iso,
+    _parse_relative_posted,
     _strip_html,
 )
 
@@ -38,6 +39,41 @@ def _company_from_slug(slug: str) -> str:
     return slug.replace("-", " ").replace("_", " ").title()
 
 
+async def _map_slugs(
+    fetch_one,
+    slugs,
+    *,
+    label: str,
+    concurrency: int = 6,
+    per_slug_timeout: float = 12.0,
+) -> list[dict]:
+    """Run a per-slug fetcher across ``slugs`` with bounded concurrency.
+
+    Preserves the adapter contract: one dead or slow slug degrades to an empty
+    list instead of raising. Serial per-slug loops were fine at 34 slugs but a
+    1000-slug registry made a single adapter coroutine run for 8-15 minutes.
+    """
+    slugs = list(slugs or [])
+    if not slugs:
+        return []
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(slug):
+        async with sem:
+            try:
+                return await asyncio.wait_for(fetch_one(slug), per_slug_timeout)
+            except asyncio.TimeoutError:
+                logger.debug("%s %s: timeout after %ss", label, slug, per_slug_timeout)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("%s %s: %s", label, slug, exc)
+            return []
+
+    batches = await asyncio.gather(*(one(s) for s in slugs))
+    jobs = [job for batch in batches for job in batch]
+    logger.info("%s: %d jobs from %d slugs", label, len(jobs), len(slugs))
+    return jobs
+
+
 def _epoch_ms_to_dt(ms) -> datetime | None:
     try:
         return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc)
@@ -48,84 +84,81 @@ def _epoch_ms_to_dt(ms) -> datetime | None:
 # ── Greenhouse ──────────────────────────────────────────────────────────────
 
 async def greenhouse(client, slugs, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for slug in slugs:
-        try:
-            resp = await client.get(
-                f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
-                timeout=_HTTP_TIMEOUT,
-            )
-            if resp.status_code != 200:
+    async def one(slug) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return jobs
+        data = resp.json()
+        company = data.get("name") or _company_from_slug(slug)
+        for job in data.get("jobs", []):
+            title = job.get("title", "")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            data = resp.json()
-            company = data.get("name") or _company_from_slug(slug)
-            for job in data.get("jobs", []):
-                title = job.get("title", "")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                location = (job.get("location") or {}).get("name", "")
-                description = _strip_html(job.get("content", ""))
-                posted_at = _parse_iso(job.get("updated_at"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                jobs.append(_normalize(
-                    job_url=job.get("absolute_url", ""),
-                    title=title, company=company, location=location,
-                    job_description=description, source="greenhouse",
-                    work_arrangement=_detect_work_arrangement(title, location, description),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Greenhouse %s: %s", slug, exc)
-    logger.info("Greenhouse: %d jobs from %d slugs", len(jobs), len(slugs))
-    return jobs
+            location = (job.get("location") or {}).get("name", "")
+            description = _strip_html(job.get("content", ""))
+            posted_at = _parse_iso(job.get("updated_at"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            jobs.append(_normalize(
+                job_url=job.get("absolute_url", ""),
+                title=title, company=company, location=location,
+                job_description=description, source="greenhouse",
+                work_arrangement=_detect_work_arrangement(title, location, description),
+                posted_at=posted_at,
+            ))
+        return jobs
+
+    return await _map_slugs(one, slugs, label="Greenhouse")
 
 
 # ── Lever ───────────────────────────────────────────────────────────────────
 
 async def lever(client, slugs, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for slug in slugs:
-        try:
-            resp = await client.get(
-                f"https://api.lever.co/v0/postings/{slug}?mode=json", timeout=_HTTP_TIMEOUT
+    async def one(slug) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://api.lever.co/v0/postings/{slug}?mode=json", timeout=_HTTP_TIMEOUT
+        )
+        if resp.status_code != 200:
+            return jobs
+        data = resp.json()
+        if not isinstance(data, list):
+            return jobs
+        for posting in data:
+            title = posting.get("text", "")
+            if profile and not _matches_criteria(title, profile):
+                continue
+            cats = posting.get("categories", {}) or {}
+            commitment = (cats.get("commitment") or "").lower()
+            if commitment and any(x in commitment for x in ("part", "intern", "temp", "volunteer")):
+                continue
+            location = cats.get("location", "")
+            description = _strip_html(
+                posting.get("descriptionPlain") or posting.get("description", "")
             )
-            if resp.status_code != 200:
+            created = posting.get("createdAt")
+            posted_at = _epoch_ms_to_dt(created) if created else None
+            if not _is_within_days(posted_at, posted_within_days):
                 continue
-            data = resp.json()
-            if not isinstance(data, list):
-                continue
-            for posting in data:
-                title = posting.get("text", "")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                cats = posting.get("categories", {}) or {}
-                commitment = (cats.get("commitment") or "").lower()
-                if commitment and any(x in commitment for x in ("part", "intern", "temp", "volunteer")):
-                    continue
-                location = cats.get("location", "")
-                description = _strip_html(
-                    posting.get("descriptionPlain") or posting.get("description", "")
-                )
-                created = posting.get("createdAt")
-                posted_at = _epoch_ms_to_dt(created) if created else None
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                jobs.append(_normalize(
-                    job_url=posting.get("hostedUrl", ""),
-                    title=title, company=_company_from_slug(slug), location=location,
-                    job_description=description, source="lever",
-                    work_arrangement=(
-                        "remote" if (posting.get("workplaceType") or "").lower() == "remote"
-                        else _detect_work_arrangement(title, location, description)
-                    ),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Lever %s: %s", slug, exc)
+            jobs.append(_normalize(
+                job_url=posting.get("hostedUrl", ""),
+                title=title, company=_company_from_slug(slug), location=location,
+                job_description=description, source="lever",
+                work_arrangement=(
+                    "remote" if (posting.get("workplaceType") or "").lower() == "remote"
+                    else _detect_work_arrangement(title, location, description)
+                ),
+                posted_at=posted_at,
+            ))
         await asyncio.sleep(0.3)  # Lever rate-limits bursts
-    logger.info("Lever: %d jobs from %d slugs", len(jobs), len(slugs))
-    return jobs
+        return jobs
+
+    # Lever throttles bursts harder than the other boards — keep it narrow.
+    return await _map_slugs(one, slugs, label="Lever", concurrency=3)
 
 
 # ── SmartRecruiters ───────────────────────────────────────────────────────────
@@ -133,49 +166,48 @@ async def lever(client, slugs, profile=None, posted_within_days=None) -> list[di
 # India offices), so we fetch all postings and let _is_india_location filter.
 
 async def smartrecruiters(client, company_ids, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for company_id in company_ids:
+    async def one(company_id) -> list[dict]:
+        jobs: list[dict] = []
         offset = 0
-        try:
-            while offset < 400:
-                resp = await client.get(
-                    f"https://api.smartrecruiters.com/v1/companies/{company_id}/postings",
-                    params={"limit": 100, "offset": offset},
-                    headers={"Accept": "application/json"},
-                    timeout=_HTTP_TIMEOUT,
-                )
-                if resp.status_code != 200:
-                    break
-                data = resp.json()
-                postings = data.get("content", [])
-                if not postings:
-                    break
-                company = postings[0].get("company", {}).get("name") or _company_from_slug(company_id)
-                for p in postings:
-                    title = p.get("name", "")
-                    if profile and not _matches_criteria(title, profile):
-                        continue
-                    loc = p.get("location", {}) or {}
-                    location = ", ".join(filter(None, [loc.get("city"), loc.get("region"), loc.get("country")]))
-                    posted_at = _parse_iso(p.get("releasedDate") or p.get("createdOn"))
-                    if not _is_within_days(posted_at, posted_within_days):
-                        continue
-                    jobs.append(_normalize(
-                        job_url=f"https://jobs.smartrecruiters.com/{company_id}/{p.get('id', '')}",
-                        title=title, company=company, location=location,
-                        job_description="", source="smartrecruiters",
-                        work_arrangement=(
-                            "remote" if p.get("remote") else _detect_work_arrangement(title, location, "")
-                        ),
-                        posted_at=posted_at,
-                    ))
-                offset += len(postings)
-                if offset >= data.get("totalFound", 0):
-                    break
-        except Exception as exc:
-            logger.debug("SmartRecruiters %s: %s", company_id, exc)
-    logger.info("SmartRecruiters: %d jobs from %d companies", len(jobs), len(company_ids))
-    return jobs
+        while offset < 400:
+            resp = await client.get(
+                f"https://api.smartrecruiters.com/v1/companies/{company_id}/postings",
+                params={"limit": 100, "offset": offset},
+                headers={"Accept": "application/json"},
+                timeout=_HTTP_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            postings = data.get("content", [])
+            if not postings:
+                break
+            company = postings[0].get("company", {}).get("name") or _company_from_slug(company_id)
+            for p in postings:
+                title = p.get("name", "")
+                if profile and not _matches_criteria(title, profile):
+                    continue
+                loc = p.get("location", {}) or {}
+                location = ", ".join(filter(None, [loc.get("city"), loc.get("region"), loc.get("country")]))
+                posted_at = _parse_iso(p.get("releasedDate") or p.get("createdOn"))
+                if not _is_within_days(posted_at, posted_within_days):
+                    continue
+                jobs.append(_normalize(
+                    job_url=f"https://jobs.smartrecruiters.com/{company_id}/{p.get('id', '')}",
+                    title=title, company=company, location=location,
+                    job_description="", source="smartrecruiters",
+                    work_arrangement=(
+                        "remote" if p.get("remote") else _detect_work_arrangement(title, location, "")
+                    ),
+                    posted_at=posted_at,
+                ))
+            offset += len(postings)
+            if offset >= data.get("totalFound", 0):
+                break
+        return jobs
+
+    # Paginates up to 4 pages per company, so it needs a wider per-slug budget.
+    return await _map_slugs(one, company_ids, label="SmartRecruiters", per_slug_timeout=30)
 
 
 # ── Ashby ─────────────────────────────────────────────────────────────────────
@@ -192,187 +224,179 @@ def _ashby_salary(job: dict) -> str | None:
 
 
 async def ashby(client, slugs, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for slug in slugs:
-        try:
-            resp = await client.get(
-                f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true",
-                headers={"Accept": "application/json"},
-                timeout=_HTTP_TIMEOUT,
-            )
-            if resp.status_code != 200:
+    async def one(slug) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true",
+            headers={"Accept": "application/json"},
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return jobs
+        data = resp.json()
+        company = (data.get("organization") or {}).get("name") or data.get("name") or _company_from_slug(slug)
+        # Ashby's posting-api returns `jobs` (current) or `jobPostings` (older).
+        for job in (data.get("jobPostings") or data.get("jobs") or []):
+            title = job.get("title", "")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            data = resp.json()
-            company = (data.get("organization") or {}).get("name") or data.get("name") or _company_from_slug(slug)
-            # Ashby's posting-api returns `jobs` (current) or `jobPostings` (older).
-            for job in (data.get("jobPostings") or data.get("jobs") or []):
-                title = job.get("title", "")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                emp_type = (job.get("employmentType") or "").lower()
-                if any(x in emp_type for x in ("part", "intern", "temp", "volunteer")):
-                    continue
-                location = job.get("location") or job.get("locationName") or ""
-                if isinstance(location, dict):
-                    location = location.get("name", "")
-                description = _strip_html(job.get("descriptionHtml") or job.get("descriptionPlain") or "")
-                posted_at = _parse_iso(job.get("publishedAt") or job.get("publishedDate"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                job_id = job.get("id", "")
-                jobs.append(_normalize(
-                    job_url=(job.get("jobUrl") or job.get("applyUrl")
-                             or f"https://jobs.ashbyhq.com/{slug}/{job_id}"),
-                    title=title, company=company, location=location,
-                    job_description=description, source="ashby",
-                    work_arrangement=(
-                        "remote" if job.get("isRemote")
-                        else _detect_work_arrangement(title, location, description)
-                    ),
-                    posted_at=posted_at,
-                    salary_raw=_ashby_salary(job),
-                ))
-        except Exception as exc:
-            logger.debug("Ashby %s: %s", slug, exc)
-    logger.info("Ashby: %d jobs from %d slugs", len(jobs), len(slugs))
-    return jobs
+            emp_type = (job.get("employmentType") or "").lower()
+            if any(x in emp_type for x in ("part", "intern", "temp", "volunteer")):
+                continue
+            location = job.get("location") or job.get("locationName") or ""
+            if isinstance(location, dict):
+                location = location.get("name", "")
+            description = _strip_html(job.get("descriptionHtml") or job.get("descriptionPlain") or "")
+            posted_at = _parse_iso(job.get("publishedAt") or job.get("publishedDate"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            job_id = job.get("id", "")
+            jobs.append(_normalize(
+                job_url=(job.get("jobUrl") or job.get("applyUrl")
+                         or f"https://jobs.ashbyhq.com/{slug}/{job_id}"),
+                title=title, company=company, location=location,
+                job_description=description, source="ashby",
+                work_arrangement=(
+                    "remote" if job.get("isRemote")
+                    else _detect_work_arrangement(title, location, description)
+                ),
+                posted_at=posted_at,
+                salary_raw=_ashby_salary(job),
+            ))
+        return jobs
+
+    return await _map_slugs(one, slugs, label="Ashby")
 
 
 # ── Workable ──────────────────────────────────────────────────────────────────
 
 async def workable(client, subdomains, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for sub in subdomains:
-        try:
-            resp = await client.get(
-                f"https://apply.workable.com/api/v1/widget/accounts/{sub}?details=true",
-                headers={"Accept": "application/json", "User-Agent": _UA},
-                timeout=_HTTP_TIMEOUT,
-            )
-            if resp.status_code != 200:
+    async def one(sub) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://apply.workable.com/api/v1/widget/accounts/{sub}?details=true",
+            headers={"Accept": "application/json", "User-Agent": _UA},
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return jobs
+        data = resp.json()
+        company = data.get("name") or _company_from_slug(sub)
+        for job in data.get("jobs", []):
+            title = job.get("title", "")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            data = resp.json()
-            company = data.get("name") or _company_from_slug(sub)
-            for job in data.get("jobs", []):
-                title = job.get("title", "")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                emp_type = (job.get("employment_type") or "").lower()
-                if any(x in emp_type for x in ("part", "intern", "temp")):
-                    continue
-                location = ", ".join(filter(None, [
-                    job.get("city"), job.get("state"), job.get("country")
-                ])) or job.get("location", "")
-                description = _strip_html(job.get("description", ""))
-                posted_at = _parse_iso(job.get("published_on") or job.get("created_at"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                shortcode = job.get("shortcode", "")
-                jobs.append(_normalize(
-                    job_url=(job.get("url") or job.get("application_url")
-                             or f"https://apply.workable.com/{sub}/j/{shortcode}/"),
-                    title=title, company=company, location=location,
-                    job_description=description, source="workable",
-                    work_arrangement=(
-                        "remote" if job.get("remote") else _detect_work_arrangement(title, location, description)
-                    ),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Workable %s: %s", sub, exc)
-    logger.info("Workable: %d jobs from %d subdomains", len(jobs), len(subdomains))
-    return jobs
+            emp_type = (job.get("employment_type") or "").lower()
+            if any(x in emp_type for x in ("part", "intern", "temp")):
+                continue
+            location = ", ".join(filter(None, [
+                job.get("city"), job.get("state"), job.get("country")
+            ])) or job.get("location", "")
+            description = _strip_html(job.get("description", ""))
+            posted_at = _parse_iso(job.get("published_on") or job.get("created_at"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            shortcode = job.get("shortcode", "")
+            jobs.append(_normalize(
+                job_url=(job.get("url") or job.get("application_url")
+                         or f"https://apply.workable.com/{sub}/j/{shortcode}/"),
+                title=title, company=company, location=location,
+                job_description=description, source="workable",
+                work_arrangement=(
+                    "remote" if job.get("remote") else _detect_work_arrangement(title, location, description)
+                ),
+                posted_at=posted_at,
+            ))
+        return jobs
+
+    return await _map_slugs(one, subdomains, label="Workable")
 
 
 # ── Recruitee ───────────────────────────────────────────────────────────────
 
 async def recruitee(client, subdomains, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for sub in subdomains:
-        try:
-            resp = await client.get(
-                f"https://{sub}.recruitee.com/api/offers/",
-                headers={"Accept": "application/json", "User-Agent": _UA},
-                timeout=_HTTP_TIMEOUT,
-            )
-            if resp.status_code != 200:
+    async def one(sub) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://{sub}.recruitee.com/api/offers/",
+            headers={"Accept": "application/json", "User-Agent": _UA},
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return jobs
+        company = _company_from_slug(sub)
+        for offer in resp.json().get("offers", []):
+            title = offer.get("title", "")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            company = _company_from_slug(sub)
-            for offer in resp.json().get("offers", []):
-                title = offer.get("title", "")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                emp_type = (offer.get("employment_type") or "").lower()
-                if any(x in emp_type for x in ("intern", "part", "temp")):
-                    continue
-                location = ", ".join(filter(None, [
-                    offer.get("city"), offer.get("country")
-                ])) or offer.get("location", "")
-                description = _strip_html(offer.get("description", ""))
-                posted_at = _parse_iso(offer.get("published_at") or offer.get("created_at"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                jobs.append(_normalize(
-                    job_url=offer.get("careers_url") or offer.get("careers_apply_url", ""),
-                    title=title, company=company, location=location,
-                    job_description=description, source="recruitee",
-                    work_arrangement=_detect_work_arrangement(title, location, description),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Recruitee %s: %s", sub, exc)
-    logger.info("Recruitee: %d jobs from %d subdomains", len(jobs), len(subdomains))
-    return jobs
+            emp_type = (offer.get("employment_type") or "").lower()
+            if any(x in emp_type for x in ("intern", "part", "temp")):
+                continue
+            location = ", ".join(filter(None, [
+                offer.get("city"), offer.get("country")
+            ])) or offer.get("location", "")
+            description = _strip_html(offer.get("description", ""))
+            posted_at = _parse_iso(offer.get("published_at") or offer.get("created_at"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            jobs.append(_normalize(
+                job_url=offer.get("careers_url") or offer.get("careers_apply_url", ""),
+                title=title, company=company, location=location,
+                job_description=description, source="recruitee",
+                work_arrangement=_detect_work_arrangement(title, location, description),
+                posted_at=posted_at,
+            ))
+        return jobs
+
+    return await _map_slugs(one, subdomains, label="Recruitee")
 
 
 # ── Breezy ──────────────────────────────────────────────────────────────────
 
 async def breezy(client, subdomains, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for sub in subdomains:
-        try:
-            resp = await client.get(
-                f"https://{sub}.breezy.hr/json",
-                headers={"Accept": "application/json", "User-Agent": _UA},
-                timeout=_HTTP_TIMEOUT,
-            )
-            if resp.status_code != 200:
+    async def one(sub) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://{sub}.breezy.hr/json",
+            headers={"Accept": "application/json", "User-Agent": _UA},
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return jobs
+        data = resp.json()
+        if not isinstance(data, list):
+            return jobs
+        company = _company_from_slug(sub)
+        for job in data:
+            if not isinstance(job, dict):
                 continue
-            data = resp.json()
-            if not isinstance(data, list):
+            title = job.get("name", "")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            company = _company_from_slug(sub)
-            for job in data:
-                if not isinstance(job, dict):
-                    continue
-                title = job.get("name", "")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                emp_type = (job.get("type", {}) or {}).get("name", "").lower()
-                if any(x in emp_type for x in ("intern", "part", "temp")):
-                    continue
-                loc = job.get("location", {}) or {}
-                location = (loc.get("name")
-                            or ", ".join(filter(None, [(loc.get("city") or {}).get("name") if isinstance(loc.get("city"), dict) else loc.get("city"),
-                                                       (loc.get("country") or {}).get("name") if isinstance(loc.get("country"), dict) else loc.get("country")])))
-                description = _strip_html(job.get("description", ""))
-                posted_at = _parse_iso(job.get("published_date") or job.get("creation_date"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                jobs.append(_normalize(
-                    job_url=job.get("url") or f"https://{sub}.breezy.hr/p/{job.get('id', '')}",
-                    title=title, company=company, location=location,
-                    job_description=description, source="breezy",
-                    work_arrangement=(
-                        "remote" if (loc.get("is_remote") or job.get("remote"))
-                        else _detect_work_arrangement(title, location, description)
-                    ),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Breezy %s: %s", sub, exc)
-    logger.info("Breezy: %d jobs from %d subdomains", len(jobs), len(subdomains))
-    return jobs
+            emp_type = (job.get("type", {}) or {}).get("name", "").lower()
+            if any(x in emp_type for x in ("intern", "part", "temp")):
+                continue
+            loc = job.get("location", {}) or {}
+            location = (loc.get("name")
+                        or ", ".join(filter(None, [(loc.get("city") or {}).get("name") if isinstance(loc.get("city"), dict) else loc.get("city"),
+                                                   (loc.get("country") or {}).get("name") if isinstance(loc.get("country"), dict) else loc.get("country")])))
+            description = _strip_html(job.get("description", ""))
+            posted_at = _parse_iso(job.get("published_date") or job.get("creation_date"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            jobs.append(_normalize(
+                job_url=job.get("url") or f"https://{sub}.breezy.hr/p/{job.get('id', '')}",
+                title=title, company=company, location=location,
+                job_description=description, source="breezy",
+                work_arrangement=(
+                    "remote" if (loc.get("is_remote") or job.get("remote"))
+                    else _detect_work_arrangement(title, location, description)
+                ),
+                posted_at=posted_at,
+            ))
+        return jobs
+
+    return await _map_slugs(one, subdomains, label="Breezy")
 
 
 # ── Personio (XML) ────────────────────────────────────────────────────────────
@@ -383,52 +407,78 @@ def _xml_text(el, tag: str) -> str:
 
 
 async def personio(client, subdomains, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for sub in subdomains:
-        try:
-            resp = await client.get(
-                f"https://{sub}.jobs.personio.de/xml",
-                headers={"Accept": "application/xml", "User-Agent": _UA},
-                timeout=_HTTP_TIMEOUT,
-            )
-            if resp.status_code != 200:
+    async def one(sub) -> list[dict]:
+        jobs: list[dict] = []
+        resp = await client.get(
+            f"https://{sub}.jobs.personio.de/xml",
+            headers={"Accept": "application/xml", "User-Agent": _UA},
+            timeout=_HTTP_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return jobs
+        root = ET.fromstring(resp.content)
+        company = _company_from_slug(sub)
+        for pos in root.iter("position"):
+            title = _xml_text(pos, "name")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            root = ET.fromstring(resp.content)
-            company = _company_from_slug(sub)
-            for pos in root.iter("position"):
-                title = _xml_text(pos, "name")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                emp_type = _xml_text(pos, "employmentType").lower()
-                if any(x in emp_type for x in ("intern", "part", "temp", "working_student")):
-                    continue
-                location = _xml_text(pos, "office")
-                desc_parts = [(d.text or "") for d in pos.iter("value")]
-                description = _strip_html(" ".join(desc_parts))
-                posted_at = _parse_iso(_xml_text(pos, "createdAt"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                job_id = _xml_text(pos, "id")
-                jobs.append(_normalize(
-                    job_url=f"https://{sub}.jobs.personio.de/job/{job_id}",
-                    title=title, company=company, location=location,
-                    job_description=description, source="personio",
-                    work_arrangement=_detect_work_arrangement(title, location, description),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Personio %s: %s", sub, exc)
-    logger.info("Personio: %d jobs from %d subdomains", len(jobs), len(subdomains))
-    return jobs
+            emp_type = _xml_text(pos, "employmentType").lower()
+            if any(x in emp_type for x in ("intern", "part", "temp", "working_student")):
+                continue
+            location = _xml_text(pos, "office")
+            desc_parts = [(d.text or "") for d in pos.iter("value")]
+            description = _strip_html(" ".join(desc_parts))
+            posted_at = _parse_iso(_xml_text(pos, "createdAt"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            job_id = _xml_text(pos, "id")
+            jobs.append(_normalize(
+                job_url=f"https://{sub}.jobs.personio.de/job/{job_id}",
+                title=title, company=company, location=location,
+                job_description=description, source="personio",
+                work_arrangement=_detect_work_arrangement(title, location, description),
+                posted_at=posted_at,
+            ))
+        return jobs
+
+    return await _map_slugs(one, subdomains, label="Personio")
 
 
 # ── Workday CXS ───────────────────────────────────────────────────────────────
 
+def _workday_posted_at(posting: dict) -> datetime | None:
+    """Best-effort posted date for a Workday CXS posting.
+
+    Workday exposes a human-readable ``postedOn`` ("Posted 3 Days Ago",
+    "Posted Today") and sometimes an ISO ``startDate``. Neither is guaranteed,
+    and until now this adapter hardcoded ``None`` — which made every Workday
+    row fail ``classify_rejection``'s missing-posted_at check, so the whole
+    source contributed zero jobs despite being wired up.
+    """
+    parsed = _parse_relative_posted(posting.get("postedOn")) or _parse_iso(posting.get("startDate"))
+    if parsed:
+        return parsed
+    # Neither field present (rare — NVIDIA's tenant fills postedOn for every
+    # row). Fall back to "now" rather than None: the tenant is listing this
+    # requisition right now, which is genuine evidence it is open, and None
+    # would send it straight back to the INVALID bucket this fix exists to
+    # empty. Backdating a guessed offset instead was tempting but it breaks
+    # the posted_within_days=7 callers, which would drop the row anyway.
+    #
+    # The cost is that an undated Workday row looks brand new on every sweep
+    # and would ride the top of a freshness-weighted feed forever. That is a
+    # ranking problem, so it gets a ranking fix: quality_score discounts rows
+    # whose date came from this fallback (see the source weights in
+    # warehouse_views.public_job_quality_score).
+    return datetime.now(timezone.utc)
+
+
 async def workday(client, entries, profile=None, posted_within_days=None) -> list[dict]:
     roles = [r.strip() for r in ((profile or {}).get("target_roles") or "").split(",") if r.strip()]
     search_terms = roles[:2] or [""]
-    jobs: list[dict] = []
-    for entry in entries:
+
+    async def one(entry) -> list[dict]:
+        jobs: list[dict] = []
         sub = entry.get("subdomain", "")
         tenant = entry.get("tenant", "1")
         site = entry.get("site") or entry.get("careers_page", "External")
@@ -437,41 +487,43 @@ async def workday(client, entries, profile=None, posted_within_days=None) -> lis
         api = f"{base}/wday/cxs/{sub}/{site}/jobs"
         for term in search_terms:
             offset = 0
-            try:
-                while offset < 100:
-                    resp = await client.post(
-                        api,
-                        json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": term},
-                        headers={"Content-Type": "application/json", "Accept": "application/json"},
-                        timeout=_HTTP_TIMEOUT,
-                    )
-                    if resp.status_code != 200:
-                        break
-                    data = resp.json()
-                    postings = data.get("jobPostings", [])
-                    if not postings:
-                        break
-                    for p in postings:
-                        title = (p.get("title") or "").strip()
-                        if not title or (profile and not _matches_criteria(title, profile)):
-                            continue
-                        location = (p.get("locationsText") or "").strip()
-                        ext = p.get("externalPath", "")
-                        jobs.append(_normalize(
-                            job_url=f"{base}/en-US/{site}{ext}",
-                            title=title, company=company, location=location,
-                            job_description="", source="workday",
-                            work_arrangement=_detect_work_arrangement(title, location, ""),
-                            posted_at=None,
-                        ))
-                    offset += len(postings)
-                    if offset >= data.get("total", 0):
-                        break
-                    await asyncio.sleep(0.3)
-            except Exception as exc:
-                logger.debug("Workday %s/%s: %s", company, term, exc)
-    logger.info("Workday: %d jobs from %d tenants", len(jobs), len(entries))
-    return jobs
+            while offset < 100:
+                resp = await client.post(
+                    api,
+                    json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": term},
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    timeout=_HTTP_TIMEOUT,
+                )
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                postings = data.get("jobPostings", [])
+                if not postings:
+                    break
+                for p in postings:
+                    title = (p.get("title") or "").strip()
+                    if not title or (profile and not _matches_criteria(title, profile)):
+                        continue
+                    location = (p.get("locationsText") or "").strip()
+                    ext = p.get("externalPath", "")
+                    posted_at = _workday_posted_at(p)
+                    if not _is_within_days(posted_at, posted_within_days):
+                        continue
+                    jobs.append(_normalize(
+                        job_url=f"{base}/en-US/{site}{ext}",
+                        title=title, company=company, location=location,
+                        job_description="", source="workday",
+                        work_arrangement=_detect_work_arrangement(title, location, ""),
+                        posted_at=posted_at,
+                    ))
+                offset += len(postings)
+                if offset >= data.get("total", 0):
+                    break
+                await asyncio.sleep(0.3)
+        return jobs
+
+    # Two search terms x up to 5 pages each, so it needs the widest budget.
+    return await _map_slugs(one, entries, label="Workday", concurrency=4, per_slug_timeout=45)
 
 
 # ── Zoho Recruit (XML feed) ─────────────────────────────────────────────────
@@ -479,38 +531,36 @@ async def workday(client, entries, profile=None, posted_within_days=None) -> lis
 # RSS/XML feed. Seed entries carry an explicit "feed_url" so this stays declarative.
 
 async def zoho(client, entries, profile=None, posted_within_days=None) -> list[dict]:
-    jobs: list[dict] = []
-    for entry in entries:
+    async def one(entry) -> list[dict]:
+        jobs: list[dict] = []
         feed_url = entry.get("feed_url")
         company = entry.get("company", "")
         if not feed_url:
-            continue
-        try:
-            resp = await client.get(
-                feed_url, headers={"Accept": "application/xml", "User-Agent": _UA}, timeout=_HTTP_TIMEOUT
-            )
-            if resp.status_code != 200:
+            return jobs
+        resp = await client.get(
+            feed_url, headers={"Accept": "application/xml", "User-Agent": _UA}, timeout=_HTTP_TIMEOUT
+        )
+        if resp.status_code != 200:
+            return jobs
+        root = ET.fromstring(resp.content)
+        for item in root.iter("item"):
+            title = _xml_text(item, "title")
+            if profile and not _matches_criteria(title, profile):
                 continue
-            root = ET.fromstring(resp.content)
-            for item in root.iter("item"):
-                title = _xml_text(item, "title")
-                if profile and not _matches_criteria(title, profile):
-                    continue
-                link = _xml_text(item, "link")
-                description = _strip_html(_xml_text(item, "description"))
-                posted_at = _parse_iso(_xml_text(item, "pubDate"))
-                if not _is_within_days(posted_at, posted_within_days):
-                    continue
-                jobs.append(_normalize(
-                    job_url=link, title=title, company=company, location="",
-                    job_description=description, source="zoho",
-                    work_arrangement=_detect_work_arrangement(title, "", description),
-                    posted_at=posted_at,
-                ))
-        except Exception as exc:
-            logger.debug("Zoho %s: %s", company, exc)
-    logger.info("Zoho: %d jobs from %d feeds", len(jobs), len(entries))
-    return jobs
+            link = _xml_text(item, "link")
+            description = _strip_html(_xml_text(item, "description"))
+            posted_at = _parse_iso(_xml_text(item, "pubDate"))
+            if not _is_within_days(posted_at, posted_within_days):
+                continue
+            jobs.append(_normalize(
+                job_url=link, title=title, company=company, location="",
+                job_description=description, source="zoho",
+                work_arrangement=_detect_work_arrangement(title, "", description),
+                posted_at=posted_at,
+            ))
+        return jobs
+
+    return await _map_slugs(one, entries, label="Zoho")
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────

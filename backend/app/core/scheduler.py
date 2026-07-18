@@ -83,6 +83,16 @@ async def _run_shared_aggregation(trigger: str = "scheduled") -> None:
         await run_aggregation(trigger=trigger)
     except Exception as e:  # noqa: BLE001
         logger.error("shared aggregation error: %s", repr(e)[:200])
+    # Bridge the broad JobPool supply into the CanonicalJob warehouse that Admin
+    # stats + the Recommended feed read. Without this the warehouse only holds
+    # what the per-cluster crawl produced while the pool holds far more. Bounded
+    # + idempotent; safe to run every cycle. (The external tick calls the same
+    # function; whichever fires first wins, the other is a cheap no-op refresh.)
+    try:
+        from app.services.aggregation import promote_pool_to_warehouse
+        await promote_pool_to_warehouse(limit=2000)
+    except Exception as e:  # noqa: BLE001
+        logger.error("pool→warehouse promotion error: %s", repr(e)[:200])
 
 
 def _warehouse_needs_warm(fresh_pool_jobs: int, live_canonical_jobs: int) -> bool:
@@ -191,11 +201,10 @@ def start_scheduler() -> None:
         return
     if scheduler.running:
         return
-    # The web deployment is intentionally a single worker. Keep one shared
-    # warehouse refresh at 00:37 and 12:37 IST, rather than fanning out a
-    # scrape for each profile. ``run_aggregation`` also guards an active run.
-    scheduler.add_job(_run_entry_level_supply, CronTrigger(hour="2,14", minute=17), id="entry_level_supply", replace_existing=True, max_instances=1, coalesce=True)
-    scheduler.add_job(_run_shared_aggregation, CronTrigger(hour="0,12", minute=37), id="warehouse_aggregation", replace_existing=True, max_instances=1, coalesce=True)
+
+    # Startup warm + digest always run in-process: the warm is a cold-boot
+    # safety net (before the first external tick lands), and the digest is a
+    # product email, not supply work.
     scheduler.add_job(
         _warm_warehouse_if_needed,
         "date",
@@ -204,11 +213,25 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
     )
+    scheduler.add_job(_run_daily_digest, CronTrigger(hour=7, minute=30), id="digest", replace_existing=True)
+
+    if settings.EXTERNAL_TICKS_ENABLED:
+        # On free Render an external scheduler (GitHub Actions → /api/internal/
+        # tick/*) owns the supply loop, because in-process cron sleeps with the
+        # instance. Registering the same jobs here would double-run them.
+        scheduler.start()
+        logger.info("APScheduler started (startup warm + digest only; supply via external ticks)")
+        return
+
+    # Self-host / always-on path: the web deployment is a single worker, so one
+    # shared warehouse refresh rather than a per-profile fan-out.
+    # ``run_aggregation`` also guards an active run.
+    scheduler.add_job(_run_entry_level_supply, CronTrigger(hour="2,14", minute=17), id="entry_level_supply", replace_existing=True, max_instances=1, coalesce=True)
+    scheduler.add_job(_run_shared_aggregation, CronTrigger(hour="0,12", minute=37), id="warehouse_aggregation", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(_cleanup_warehouse, CronTrigger(hour=1, minute=47), id="warehouse_cleanup", replace_existing=True, max_instances=1, coalesce=True)
     scheduler.add_job(_run_slug_revalidation, CronTrigger(hour=3, minute=0), id="slug_revalidate", replace_existing=True)
-    scheduler.add_job(_run_daily_digest, CronTrigger(hour=7, minute=30), id="digest", replace_existing=True)
     scheduler.start()
-    logger.info("APScheduler started (ancillary revalidation + digest only)")
+    logger.info("APScheduler started (in-process supply cron)")
 
 
 def shutdown_scheduler() -> None:

@@ -34,6 +34,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import select, func, or_
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -46,10 +47,8 @@ from app.models.user import User
 from app.services.experience_filters import (
     FRESHER_TERMS,
     ROLE_QUERY_ALIASES,
-    is_experience_match,
     normalize_experience,
 )
-from app.services.warehouse_views import public_job_quality_score
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -250,6 +249,9 @@ class PublicJobResponse(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     search_query: Optional[str] = None
+    # Feed badges: confidence < 0.5 → "Location not specified"; internship tag.
+    india_confidence: Optional[float] = None
+    employment_type: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -290,111 +292,66 @@ async def _matching_pool_rows(
     limit: int = 100,
     offset: int = 0,
 ) -> list[JobPool]:
-    """Fast DB-backed matches with synonym-aware role filtering."""
-    from app.agents.job_discovery_agent import (
-        _is_excluded_job,
-        _is_india_strict,
-        _matches_criteria,
+    """DB-backed matches: filtering, ranking, dedup and pagination all in SQL.
+
+    Everything runs against the indexed columns from migration 0023, so `offset`
+    is applied by the database after the full result set is filtered — deep
+    pages return real rows instead of the empty slices the old fetch-1500-then-
+    Python-filter path produced.
+    """
+    from app.services.job_search_sql import (
+        role_predicate, location_predicate, experience_predicate, ranking_order,
     )
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=posted_within_days or 7)
-    q = select(JobPool).where(JobPool.last_seen_at >= cutoff)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=posted_within_days or 7)
+    conds = [
+        JobPool.last_seen_at >= cutoff,
+        # India applicability gate — replaces the per-row Python _is_india_strict.
+        func.coalesce(JobPool.india_confidence, 0.0) >= 0.5,
+    ]
     if source:
-        q = q.where(JobPool.source == source)
+        conds.append(JobPool.source == source)
     if work_filter:
-        q = q.where(func.lower(JobPool.work_arrangement) == work_filter)
-    if location and location.strip().lower() not in {"india", "all india", "pan india"}:
-        loc = location.strip().lower()
-        q = q.where(or_(
-            func.lower(JobPool.location).contains(loc),
-            func.lower(JobPool.location).contains("remote india"),
-            func.lower(JobPool.location).contains("pan india"),
-            func.lower(JobPool.location).contains("pan-india"),
-            func.lower(JobPool.location).contains("anywhere in india"),
-        ))
+        conds.append(func.lower(JobPool.work_arrangement) == work_filter)
+    for pred in (role_predicate(role), location_predicate(location),
+                 experience_predicate(experience_filter)):
+        if pred is not None:
+            conds.append(pred)
 
-    fetch_limit = min(1500, max(limit * 8, limit + offset + 200))
+    # DISTINCT ON content_key collapses the same (company,title) seen at
+    # different URLs; the outer query restores rank order and paginates.
+    order = ranking_order(now)
+    inner = (
+        select(JobPool)
+        .where(*conds)
+        .distinct(JobPool.content_key)
+        .order_by(JobPool.content_key, order)
+        .subquery()
+    )
+    aliased_job = aliased(JobPool, inner)
     rows = (await db.execute(
-        q.order_by(JobPool.last_seen_at.desc()).limit(fetch_limit)
+        select(aliased_job)
+        .order_by(_aliased_order(inner, now))
+        .offset(offset)
+        .limit(limit)
     )).scalars().all()
-
-    profile_dict = {"target_roles": role or ""}
-    out: list[JobPool] = []
-    seen: set[str] = set()
-    seen_content: set[tuple[str, str]] = set()
-    for row in rows:
-        key = row.job_url or f"{row.company}-{row.title}-{row.location}"
-        if key in seen:
-            continue
-        seen.add(key)
-        content_key = _content_key(row.company, row.title)
-        if content_key and content_key in seen_content:
-            continue
-        if content_key:
-            seen_content.add(content_key)
-        if role and not _matches_criteria(row.title or "", profile_dict):
-            continue
-        if not _is_india_strict(row.location):
-            continue
-        if _is_excluded_job(row.title or "", row.company or "", row.job_url, row.job_description or ""):
-            continue
-        if not is_experience_match(row.title, row.job_description, experience_filter):
-            continue
-        out.append(row)
-    ranked = _rank_pool_rows(out, role=role, experience_filter=experience_filter)
-    return ranked[offset:offset + limit]
+    return list(rows)
 
 
-def _content_key(company: str | None, title: str | None) -> tuple[str, str] | None:
-    c = re.sub(r"[^a-z0-9]", "", (company or "").lower())
-    t = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]", " ", (title or "").lower())).strip()
-    return (c, t) if c and t else None
+def _aliased_order(inner, now):
+    """Ranking expression rebound to the DISTINCT-ON subquery's columns."""
+    age_days = func.extract(
+        "epoch", func.coalesce(now, func.now())
+        - func.coalesce(inner.c.posted_at, inner.c.first_seen_at)
+    ) / 86400.0
+    return (func.coalesce(inner.c.quality_score, 0.0) - 3.0 * age_days).desc()
 
 
-def _row_quality_score(row: JobPool, *, role: str | None, experience_filter: str | None) -> float:
-    title = (row.title or "").lower()
-    company = (row.company or "").lower()
-    url = (row.job_url or "").lower()
-    score = public_job_quality_score(
-        title=row.title,
-        source=row.source,
-        posted_at=row.posted_at,
-        now=datetime.now(timezone.utc),
-        role=role,
-        experience_filter=experience_filter,
-    )
-    if re.search(r"\b(seo|digital marketing|wordpress designer|data analyst)\b", title):
-        score -= 14
-    if "javabykiran" in url or "placements/latest-job-opening" in url or "training" in company:
-        score -= 18
-    if title.count("/") + title.count(",") >= 2:
-        score -= 5
-
-    return score
-
-
-def _rank_pool_rows(rows: list[JobPool], *, role: str | None, experience_filter: str | None) -> list[JobPool]:
-    ranked = sorted(
-        rows,
-        key=lambda row: (
-            _row_quality_score(row, role=role, experience_filter=experience_filter),
-            row.posted_at or row.last_seen_at,
-            row.last_seen_at,
-        ),
-        reverse=True,
-    )
-    unique_company: list[JobPool] = []
-    overflow: list[JobPool] = []
-    companies: set[str] = set()
-    for row in ranked:
-        company_key = re.sub(r"[^a-z0-9]", "", (row.company or "").lower())
-        if company_key and company_key in companies:
-            overflow.append(row)
-            continue
-        if company_key:
-            companies.add(company_key)
-        unique_company.append(row)
-    return unique_company + overflow
+# NOTE: ranking, content-dedup and quality scoring moved into SQL
+# (services/job_search_sql.py + the quality_score/content_key columns). The old
+# Python _rank_pool_rows / _row_quality_score / _content_key helpers were
+# removed with the fetch-1500-then-filter path they served.
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────

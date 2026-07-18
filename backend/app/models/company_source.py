@@ -64,3 +64,34 @@ class CompanySource(Base):
     # {company, feed_url}). NULL for slug-only ATSes.
     config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Probe queue ──────────────────────────────────────────────────────────
+    # `status` stays the runtime loader's filter; these drive the resumable
+    # discovery tick. candidate -> probing -> active | no_india | dead.
+    # `no_india` is deliberately distinct from `dead`: a live board with zero
+    # India roles today is future supply worth re-probing, not a broken
+    # endpoint to discard.
+    probe_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="candidate", server_default="candidate"
+    )
+    # Provenance weight — curated 300 > yc 250 > serpapi 200 > commoncrawl 100.
+    probe_priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default="100"
+    )
+    # Backoff / re-probe scheduling. NULL means "eligible now".
+    next_probe_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    probe_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Crash-safe in-flight lease; a reaper returns expired leases to the queue.
+    probe_leased_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # "IN" once a probe shows >=40% India-explicit roles. Lets the admission
+    # policy trust an unlabelled posting on a demonstrably-India board.
+    country_hint: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    last_ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

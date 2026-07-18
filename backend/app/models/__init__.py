@@ -9,6 +9,8 @@ from app.models.saved_application import SavedApplication
 from app.models.job_pool import JobPool
 from app.models.company_source import CompanySource
 from app.models.discovery_run import DiscoveryRun
+from app.models.ingest_cursor import IngestCursor
+from app.models.api_credit_ledger import ApiCreditLedger
 from app.models.job_warehouse import (
     AggregationRun,
     CanonicalJob,
@@ -27,4 +29,5 @@ __all__ = [
     "JobPool", "CompanySource", "DiscoveryRun", "Employer", "CanonicalJob",
     "JobSourceSighting", "DemandCluster", "ProfileDemandMembership",
     "ProfileJobMatch", "AggregationRun", "SourceRunMetric", "JobRejection",
+    "IngestCursor", "ApiCreditLedger",
 ]

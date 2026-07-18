@@ -144,7 +144,7 @@ def _as_utc(value: Any) -> datetime | None:
 
 
 def classify_rejection(
-    job: Mapping[str, Any], *, now: datetime | None = None, max_age_days: int = 7
+    job: Mapping[str, Any], *, now: datetime | None = None, max_age_days: int = 21
 ) -> Rejection | None:
     title = str(job.get("title") or "").strip()
     employer = str(job.get("company") or job.get("employer") or "").strip()
@@ -162,8 +162,13 @@ def classify_rejection(
         return Rejection(RejectionReason.STAFFING_OR_RECRUITMENT, "third-party recruiter or staffing employer")
     if _JOB_BOARD_RE.fullmatch(normalize_employer(employer)):
         return Rejection(RejectionReason.JOB_BOARD_EMPLOYER, "job board cannot be the hiring employer")
+    # Same India verdict the feed uses (services/job_admission), so a job can't
+    # be admitted by one path and dropped by the other. Only an explicit-foreign
+    # verdict is a hard reject here; UNKNOWN/global-remote are admitted and let
+    # the confidence-graded feed decide visibility.
+    from app.services.job_admission import classify_india, IndiaVerdict
     location = str(job.get("location") or "").strip()
-    if is_foreign_only(location):
+    if classify_india(location, work_arrangement=job.get("work_arrangement")) is IndiaVerdict.FOREIGN:
         return Rejection(RejectionReason.FOREIGN_ONLY, "role is not open to India")
     return None
 
@@ -181,7 +186,7 @@ def job_fingerprint(job: Mapping[str, Any]) -> str:
 
 
 def deduplicate_batch(
-    jobs: Iterable[Mapping[str, Any]], *, now: datetime | None = None, max_age_days: int = 7
+    jobs: Iterable[Mapping[str, Any]], *, now: datetime | None = None, max_age_days: int = 21
 ) -> BatchResult:
     """Admit clean jobs and attach all exact in-batch sightings.
 
@@ -213,7 +218,12 @@ def deduplicate_batch(
             by_url[url] = existing
             continue
         posted = _as_utc(raw.get("posted_at"))
-        assert posted is not None
+        if posted is None:
+            # classify_rejection already rejects missing posted_at as INVALID,
+            # so this is unreachable in the normal path — but a bare assert
+            # would be stripped under `python -O`, turning a contract breach
+            # into a downstream TypeError.
+            continue
         employer = str(raw.get("company") or raw.get("employer") or "").strip()
         title = str(raw.get("title") or "").strip()
         candidate = CanonicalCandidate(

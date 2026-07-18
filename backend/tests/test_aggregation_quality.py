@@ -42,7 +42,9 @@ def test_normalization_preserves_identity_query_and_removes_tracking():
     [
         ({"company": "Talent Staffing Solutions"}, RejectionReason.STAFFING_OR_RECRUITMENT),
         ({"company": "LinkedIn"}, RejectionReason.JOB_BOARD_EMPLOYER),
-        ({"posted_at": NOW - timedelta(days=8)}, RejectionReason.STALE),
+        # Retention is 21 days (see settings.JOB_RETENTION_DAYS); 8 days is now
+        # fresh, 22 is stale.
+        ({"posted_at": NOW - timedelta(days=22)}, RejectionReason.STALE),
         ({"location": "United States only"}, RejectionReason.FOREIGN_ONLY),
         ({"job_url": "javascript:alert(1)"}, RejectionReason.INVALID),
     ],

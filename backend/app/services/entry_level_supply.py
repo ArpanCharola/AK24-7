@@ -139,7 +139,10 @@ async def backfill_entry_level_supply(
     max_roles: int | None = None,
     use_stealth: bool = False,
     use_tier3: bool = True,
-    use_serpapi: bool = True,
+    # SerpAPI's ~100/mo free credits are reserved for slug discovery, so job
+    # fetching no longer spends them. The parameter is kept for call-site
+    # compatibility but _serpapi_supply_jobs is now a hard no-op.
+    use_serpapi: bool = False,
 ) -> dict:
     selected_roles = list(dict.fromkeys(r.strip() for r in (roles or ENTRY_LEVEL_TECH_ROLES) if r and r.strip()))
     if max_roles is not None:
@@ -206,8 +209,9 @@ async def _serpapi_supply_jobs(
     queries: list[str],
     posted_within_days: int,
 ) -> list[dict]:
-    if not (getattr(settings, "SERPAPI_KEY", "") or ""):
-        return []
+    # Discovery-only budget: never fetch jobs via SerpAPI. See the note on
+    # backfill_entry_level_supply's use_serpapi parameter.
+    return []
     jobs: list[dict] = []
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         results = await asyncio_gather_safe([

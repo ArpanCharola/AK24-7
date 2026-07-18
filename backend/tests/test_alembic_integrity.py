@@ -28,4 +28,6 @@ def test_alembic_revision_graph_is_resolvable():
                 "Use the actual Alembic revision id, not the migration filename."
             )
 
-    assert heads == ["0019_production_reconcile"]
+    # Pinned so an accidental second head (two migrations sharing a parent)
+    # fails here rather than at deploy. Bump this when adding a migration.
+    assert heads == ["0023_job_pool_quality_search"]

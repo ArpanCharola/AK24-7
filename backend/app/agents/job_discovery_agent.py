@@ -263,6 +263,39 @@ def _parse_iso(s: str | None) -> datetime | None:
         return None
 
 
+# Human-readable posted stamps: Google Jobs' "2 days ago" / "10+ days ago" and
+# Workday CXS' "Posted 3 Days Ago" / "Posted Today" share this shape.
+_POSTED_AGO_RE = re.compile(
+    r"(\d+)\+?\s*(minute|hour|day|week|month)s?\s*ago",
+    re.IGNORECASE,
+)
+
+
+def _parse_relative_posted(s: str | None) -> datetime | None:
+    """Map a human-readable relative posted stamp into a UTC datetime."""
+    if not s:
+        return None
+    text = str(s).lower().strip()
+    if "just posted" in text or "today" in text:
+        return datetime.now(timezone.utc)
+    if "yesterday" in text:
+        return datetime.now(timezone.utc) - timedelta(days=1)
+    m = _POSTED_AGO_RE.search(text)
+    if not m:
+        return None
+    n = int(m.group(1))
+    deltas = {
+        "minute": timedelta(minutes=n),
+        "hour": timedelta(hours=n),
+        "day": timedelta(days=n),
+        "week": timedelta(weeks=n),
+        # 31 (not 30) days/month so a "1 month ago" posting reads as just-older
+        # than a 30-day freshness window rather than sneaking in at the boundary.
+        "month": timedelta(days=n * 31),
+    }
+    return datetime.now(timezone.utc) - deltas.get(m.group(2).lower(), timedelta(0))
+
+
 def _is_within_days(dt: datetime | None, max_days: int | None) -> bool:
     if max_days is None or dt is None:
         return True
@@ -272,6 +305,8 @@ def _is_within_days(dt: datetime | None, max_days: int | None) -> bool:
 
 
 # ── Normalized job dict (contract #3) ─────────────────────────────────────────
+
+_MAX_DESCRIPTION_CHARS = 4000
 
 def _normalize(
     *,
@@ -287,6 +322,12 @@ def _normalize(
     salary_raw: str | None = None,
     notice_period: str | None = None,
 ) -> dict:
+    # Descriptions are the dominant memory cost of a wide sweep (a 1000-slug
+    # run holds thousands of these in flight on a 512MB box) and nothing
+    # downstream — scoring, search indexing, the job card — reads past the
+    # first few thousand characters.
+    if job_description and len(job_description) > _MAX_DESCRIPTION_CHARS:
+        job_description = job_description[:_MAX_DESCRIPTION_CHARS]
     return {
         "job_url": job_url,
         "title": title,
@@ -547,7 +588,6 @@ class JobDiscoveryAgent:
         from app.agents.hirect_source import fetch_all_hirect
         from app.agents.hirist_source import fetch_all_hirist_tech
         from app.services.jobs_aggregators import fetch_all_aggregators
-        from app.services.serpapi_jobs import search_serpapi_jobs
 
         slugs = await get_india_slugs()
         locations = [l.strip() for l in (profile.get("locations") or "").split(",") if l.strip()]
@@ -564,12 +604,14 @@ class JobDiscoveryAgent:
                 r.strip() for r in (profile.get("target_roles") or "").split(",") if r.strip()
             ] or ["Software Engineer"]
 
-        serpapi_profile = {**profile, "search_query": ", ".join(queries[:2])}
+        # SerpAPI is deliberately NOT a fetch source: the free plan is ~100
+        # searches/month and those credits are spent on slug discovery (a
+        # permanent registry gain) rather than 7-day-expiring job rows. See
+        # services/credit_budget.py and the slug-harvest ticks.
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             tasks = [
                 fetch_all_ats(client, slugs, profile, posted_within),
                 fetch_all_aggregators(client, queries, locations),
-                search_serpapi_jobs(client, serpapi_profile, posted_within, max_pages=2),
             ]
             if include_tier3:
                 tasks.extend([
@@ -731,53 +773,60 @@ def _trunc(value: str | None, n: int) -> str | None:
     return value[:n] if isinstance(value, str) else value
 
 
-async def warm_job_pool(posted_within_days: int | None = 7) -> dict:
-    """Fetch EVERY role from every active ATS slug into the shared JobPool.
+def _pool_row_from_job(j: dict, now: datetime, *, country_hint: str | None = None) -> dict | None:
+    """One discovered job → a JobPool row dict, or None if it has no usable URL.
+    Truncation + admission grading (india_confidence / employment_type /
+    quality_score / expires_at) happen here so every producer stays consistent
+    and the serving layer can filter/rank in SQL instead of a Python loop."""
+    from app.services.job_admission import india_confidence, employment_type
+    from app.services.warehouse_views import public_job_quality_score
+    from app.config import settings
 
-    Generalized discovery: passing profile=None to fetch_all_ats skips the
-    per-role title filter, so the pool fills with the full breadth of India
-    roles (not just one user's target role). Per-user feeds then match/score
-    from this pool. Runs on a schedule so freshness stays high. Returns stats.
-    """
+    url = j.get("job_url")
+    if not url or len(url) > 2048:
+        return None
+    title = j.get("title")
+    location = j.get("location")
+    posted_at = j.get("posted_at")
+    conf = india_confidence(
+        location, work_arrangement=j.get("work_arrangement"), country_hint=country_hint
+    )
+    quality = public_job_quality_score(
+        title=title, source=j.get("source"), posted_at=posted_at,
+        now=now, role=None, experience_filter=None,
+    )
+    expires_at = (posted_at + timedelta(days=settings.JOB_RETENTION_DAYS)) if posted_at else None
+    return {
+        "job_url": url,
+        "title": _trunc(title, 255),
+        "company": _trunc(j.get("company"), 255),
+        "location": _trunc(location, 255),
+        "job_description": j.get("job_description"),
+        "source": _trunc(j.get("source") or "pool", 50),
+        "work_arrangement": _trunc(j.get("work_arrangement"), 20),
+        "posted_at": posted_at,
+        "salary_lpa": j.get("salary_lpa"),
+        "salary_raw": _trunc(j.get("salary_raw"), 120),
+        "notice_period": _trunc(j.get("notice_period"), 20),
+        "search_query": "__pool_warm__",
+        "india_confidence": conf,
+        "employment_type": employment_type(title, j.get("job_description")),
+        "quality_score": quality,
+        "expires_at": expires_at,
+        "first_seen_at": now,
+        "last_seen_at": now,
+    }
+
+
+async def _upsert_pool_rows(rows: list[dict]) -> int:
+    """Atomic, dup-safe upsert into JobPool in chunks. A bad chunk is skipped,
+    never fatal. `coalesce` means a null in the new row never wipes an existing
+    value (so a thin re-fetch can't erase a rich first sighting)."""
     from sqlalchemy import func
     from sqlalchemy.dialects.postgresql import insert as pg_insert
-    from app.agents.ats_sources import fetch_all_ats
     from app.core.database import AsyncSessionLocal
     from app.models.job_pool import JobPool
 
-    slugs = await get_india_slugs()
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        raw = await fetch_all_ats(client, slugs, None, posted_within_days)
-
-    agent = JobDiscoveryAgent()
-    jobs = agent._postprocess(raw, excluded=set(), wanted_arrangements=set(), posted_within=posted_within_days)
-
-    now = datetime.now(timezone.utc)
-    # Dedup by exact job_url (keep last) + truncate to column limits → row dicts.
-    by_url: dict[str, dict] = {}
-    for j in jobs:
-        url = j.get("job_url")
-        if not url or len(url) > 2048:
-            continue
-        by_url[url] = {
-            "job_url": url,
-            "title": _trunc(j.get("title"), 255),
-            "company": _trunc(j.get("company"), 255),
-            "location": _trunc(j.get("location"), 255),
-            "job_description": j.get("job_description"),
-            "source": _trunc(j.get("source") or "pool", 50),
-            "work_arrangement": _trunc(j.get("work_arrangement"), 20),
-            "posted_at": j.get("posted_at"),
-            "salary_lpa": j.get("salary_lpa"),
-            "salary_raw": _trunc(j.get("salary_raw"), 120),
-            "notice_period": _trunc(j.get("notice_period"), 20),
-            "search_query": "__pool_warm__",
-            "first_seen_at": now,
-            "last_seen_at": now,
-        }
-    rows = list(by_url.values())
-
-    # Atomic, dup-safe upsert in chunks; a bad chunk is skipped, never fatal.
     saved = 0
     async with AsyncSessionLocal() as db:
         for i in range(0, len(rows), 500):
@@ -796,6 +845,10 @@ async def warm_job_pool(posted_within_days: int | None = 7) -> dict:
                     "salary_lpa": func.coalesce(stmt.excluded.salary_lpa, JobPool.salary_lpa),
                     "salary_raw": func.coalesce(stmt.excluded.salary_raw, JobPool.salary_raw),
                     "notice_period": func.coalesce(stmt.excluded.notice_period, JobPool.notice_period),
+                    "india_confidence": func.coalesce(stmt.excluded.india_confidence, JobPool.india_confidence),
+                    "employment_type": func.coalesce(stmt.excluded.employment_type, JobPool.employment_type),
+                    "quality_score": func.coalesce(stmt.excluded.quality_score, JobPool.quality_score),
+                    "expires_at": func.coalesce(stmt.excluded.expires_at, JobPool.expires_at),
                     "last_seen_at": stmt.excluded.last_seen_at,
                 },
             )
@@ -806,11 +859,124 @@ async def warm_job_pool(posted_within_days: int | None = 7) -> dict:
             except Exception as exc:  # noqa: BLE001 — one bad chunk never aborts the run
                 await db.rollback()
                 logger.warning("pool chunk %d skipped: %s", i // 500, repr(exc)[:160])
+    return saved
 
-    stats = {"fetched": len(raw), "kept": len(jobs), "pooled": saved}
+
+async def warm_job_pool_for_slugs(slug_dict: dict, posted_within_days: int | None = None) -> dict:
+    """Fetch every role from a specific slug dict into JobPool. The primitive
+    both the full warm and the resumable sweep build on. `posted_within_days=None`
+    keeps everything the board still lists — retention is decided downstream by
+    expiry, not thrown away at fetch time."""
+    from app.agents.ats_sources import fetch_all_ats
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        raw = await fetch_all_ats(client, slug_dict, None, posted_within_days)
+
+    agent = JobDiscoveryAgent()
+    jobs = agent._postprocess(raw, excluded=set(), wanted_arrangements=set(), posted_within=posted_within_days)
+
+    now = datetime.now(timezone.utc)
+    by_url: dict[str, dict] = {}
+    for j in jobs:
+        row = _pool_row_from_job(j, now)
+        if row:
+            by_url[row["job_url"]] = row  # dedup by url, keep last
+    saved = await _upsert_pool_rows(list(by_url.values()))
+    return {"fetched": len(raw), "kept": len(jobs), "pooled": saved}
+
+
+async def warm_job_pool(posted_within_days: int | None = 7) -> dict:
+    """Fetch EVERY role from every active ATS slug into the shared JobPool.
+
+    Generalized discovery: passing profile=None to fetch_all_ats skips the
+    per-role title filter, so the pool fills with the full breadth of India
+    roles (not just one user's target role). Per-user feeds then match/score
+    from this pool. Runs on a schedule so freshness stays high. Returns stats.
+    """
+    slugs = await get_india_slugs()
+    stats = await warm_job_pool_for_slugs(slugs, posted_within_days)
     logger.info("warm_job_pool: %s", stats)
-    await log_discovery_run("pool_warm", jobs_found=saved, stats=stats)
+    await log_discovery_run("pool_warm", jobs_found=stats["pooled"], stats=stats)
     return stats
+
+
+async def sweep_ingest_tick(chunk: int = 25, budget_seconds: float = 50.0) -> dict:
+    """Resumably ingest the whole active registry, a few slugs per tick.
+
+    Replaces the sequential per-DemandCluster fanout (which re-crawled every
+    source once per role). Instead we page company_source by a stable id cursor
+    and warm each shard into JobPool. Sharding by id (not offset) means a row
+    inserted mid-sweep is picked up on the next pass rather than skipped, and
+    the cursor resets to 0 when the tail is reached — so every sweep covers 100%
+    of the registry and the next one starts over for freshness.
+    """
+    import time
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.company_source import CompanySource
+    from app.services.tick_state import load_cursor, save_cursor
+
+    started = time.monotonic()
+    cur = await load_cursor("bulk_ingest:sweep")
+    cursor_id = int(cur.cursor_value) if cur and cur.cursor_value else 0
+    payload = dict(cur.payload) if cur and cur.payload else {"sweeps_completed": 0}
+
+    totals = {"slugs": 0, "fetched": 0, "kept": 0, "pooled": 0, "shards": 0}
+    now = datetime.now(timezone.utc)
+
+    while time.monotonic() - started < budget_seconds:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(CompanySource.id, CompanySource.ats, CompanySource.slug, CompanySource.config_json)
+                .where(CompanySource.status == "active", CompanySource.id > cursor_id)
+                .order_by(CompanySource.id)
+                .limit(chunk)
+            )).all()
+
+        if not rows:
+            # Tail reached — one full pass done; reset for the next sweep.
+            cursor_id = 0
+            payload["sweeps_completed"] = payload.get("sweeps_completed", 0) + 1
+            break
+
+        slug_dict: dict = {k: [] for k in _ATS_KEYS}
+        ids = [r[0] for r in rows]
+        for _id, ats, slug, config in rows:
+            slug_dict.setdefault(ats, [])
+            if ats in ("workday", "zoho"):
+                if config:
+                    slug_dict[ats].append(config)
+            else:
+                slug_dict[ats].append(slug)
+
+        stats = await warm_job_pool_for_slugs(slug_dict, posted_within_days=None)
+        totals["slugs"] += len(rows)
+        totals["fetched"] += stats["fetched"]
+        totals["kept"] += stats["kept"]
+        totals["pooled"] += stats["pooled"]
+        totals["shards"] += 1
+        cursor_id = ids[-1]
+
+        # Mark these slugs ingested so a perpetually-empty one is spottable.
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import update
+            await db.execute(
+                update(CompanySource).where(CompanySource.id.in_(ids)).values(last_ingested_at=now)
+            )
+            await db.commit()
+
+    await save_cursor(
+        "bulk_ingest:sweep",
+        cursor_value=str(cursor_id),
+        payload=payload,
+        stats=totals,
+        ok=True,
+    )
+    totals["cursor_id"] = cursor_id
+    totals["sweeps_completed"] = payload.get("sweeps_completed", 0)
+    totals["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    logger.info("sweep_ingest_tick: %s", totals)
+    return totals
 
 
 async def seed_user_feed_from_pool(

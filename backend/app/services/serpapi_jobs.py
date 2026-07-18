@@ -22,43 +22,17 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 
+from app.agents.job_discovery_agent import _parse_relative_posted
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _API_URL = "https://serpapi.com/search.json"
 
-# "2 days ago" / "10+ days ago" / "Just posted" patterns.
-_POSTED_AGO_RE = re.compile(
-    r"(\d+)\+?\s*(minute|hour|day|week|month)s?\s*ago",
-    re.IGNORECASE,
-)
-
-
-def _parse_posted_ago(s: str | None) -> datetime | None:
-    """Map Google Jobs' human-readable posted_at into a UTC datetime."""
-    if not s:
-        return None
-    text = s.lower().strip()
-    if "just posted" in text or "today" in text:
-        return datetime.now(timezone.utc)
-    if "yesterday" in text:
-        return datetime.now(timezone.utc) - timedelta(days=1)
-    m = _POSTED_AGO_RE.search(text)
-    if not m:
-        return None
-    n = int(m.group(1))
-    unit = m.group(2).lower()
-    deltas = {
-        "minute": timedelta(minutes=n),
-        "hour": timedelta(hours=n),
-        "day": timedelta(days=n),
-        "week": timedelta(weeks=n),
-        # 31 (not 30) days/month so a "1 month ago" posting reads as just-older
-        # than a 30-day freshness window rather than sneaking in at the boundary.
-        "month": timedelta(days=n * 31),
-    }
-    return datetime.now(timezone.utc) - deltas.get(unit, timedelta(0))
+# Google Jobs' "2 days ago" / "10+ days ago" / "Just posted" stamps share a
+# shape with Workday CXS' "Posted 3 Days Ago", so the parser lives alongside
+# the other date helpers in job_discovery_agent and both sources import it.
+_parse_posted_ago = _parse_relative_posted
 
 
 def _pick_apply_url(job: dict) -> str:

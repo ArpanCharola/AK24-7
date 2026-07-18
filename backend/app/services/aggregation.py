@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import delete, func, or_, select
 
 from app.aggregation.quality import deduplicate_batch
+from app.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.india_locations import location_matches_preference
 from app.models.job_search_profile import JobSearchProfile
@@ -216,7 +217,7 @@ async def _persist_candidate(db, candidate, run: AggregationRun) -> tuple[Canoni
     created = job is None
     now = _now()
     if not job:
-        job = CanonicalJob(employer_id=employer.id, title=candidate.title, normalized_title=candidate.normalized_title, role_family=_role_family([candidate.title]), description=candidate.description or None, location=candidate.location or None, location_normalized=(candidate.location or "").casefold() or None, work_arrangement="remote" if "remote" in (candidate.location or "").casefold() else "onsite", canonical_url=candidate.canonical_url, canonical_url_hash=url_hash, preferred_source=candidate.sightings[0].source, fingerprint=candidate.fingerprint, posted_at=candidate.posted_at, expires_at=candidate.posted_at + timedelta(days=7), status="live", last_seen_at=now)
+        job = CanonicalJob(employer_id=employer.id, title=candidate.title, normalized_title=candidate.normalized_title, role_family=_role_family([candidate.title]), description=candidate.description or None, location=candidate.location or None, location_normalized=(candidate.location or "").casefold() or None, work_arrangement="remote" if "remote" in (candidate.location or "").casefold() else "onsite", canonical_url=candidate.canonical_url, canonical_url_hash=url_hash, preferred_source=candidate.sightings[0].source, fingerprint=candidate.fingerprint, posted_at=candidate.posted_at, expires_at=candidate.posted_at + timedelta(days=settings.JOB_RETENTION_DAYS), status="live", last_seen_at=now)
         db.add(job)
         await db.flush()
     else:
@@ -396,7 +397,7 @@ async def run_aggregation(trigger: str = "scheduled") -> dict:
                 except Exception as exc:
                     cluster.status = "failed"; logger.warning("cluster %s failed: %s", cluster.id, exc)
             raw = [item for items in raw_by_source.values() for item in items]
-            batch = deduplicate_batch(raw, max_age_days=7)
+            batch = deduplicate_batch(raw, max_age_days=settings.JOB_RETENTION_DAYS)
             accepted_jobs: list[CanonicalJob] = []
             source_counts = Counter(item.get("source") or "unknown" for item in raw)
             for raw_job, rejection in batch.rejections:
@@ -414,8 +415,64 @@ async def run_aggregation(trigger: str = "scheduled") -> dict:
             await db.rollback(); run.status = "failed"; run.error_summary = str(exc)[:1000]; run.finished_at = _now(); db.add(run); await db.commit(); raise
 
 
+async def promote_pool_to_warehouse(*, limit: int = 800) -> dict:
+    """Bridge JobPool → the CanonicalJob warehouse.
+
+    The sweep pours breadth into JobPool, but Admin stats and the Recommended
+    feed read the warehouse — so without this bridge the warehouse stays at
+    whatever the (now-retired) per-cluster crawl left behind while the pool holds
+    thousands. This reuses the exact admission + persist path run_aggregation
+    uses (deduplicate_batch → _persist_candidate → _refresh_matches), just
+    sourced from the pool instead of a live crawl. Idempotent: re-running only
+    refreshes last_seen / adds newly-pooled jobs.
+
+    Processes the least-recently-promoted `limit` fresh rows per call so it fits
+    the free-tier tick budget and rotates through the whole pool over time.
+    """
+    now = _now()
+    fresh_after = now - timedelta(days=settings.JOB_RETENTION_DAYS)
+    async with AsyncSessionLocal() as db:
+        active = (await db.execute(select(AggregationRun).where(AggregationRun.status == "running"))).scalars().first()
+        if active:
+            return {"status": "skipped", "reason": "aggregation already running", "run_id": active.id}
+        run = AggregationRun(trigger="pool_promotion", status="running", lease_key=f"pool:{now.strftime('%Y%m%d%H%M%S%f')}", started_at=now)
+        db.add(run); await db.commit(); await db.refresh(run)
+        try:
+            clusters = await sync_profile_demands(db)
+            rows = (await db.execute(
+                select(JobPool)
+                .where(
+                    JobPool.last_seen_at >= fresh_after,
+                    func.coalesce(JobPool.india_confidence, 0.0) >= 0.5,
+                )
+                .order_by(JobPool.last_seen_at.desc())
+                .limit(limit)
+            )).scalars().all()
+
+            raw = [{
+                "job_url": r.job_url, "title": r.title, "company": r.company,
+                "location": r.location, "job_description": r.job_description,
+                "source": r.source, "posted_at": r.posted_at or r.first_seen_at,
+                "work_arrangement": r.work_arrangement,
+            } for r in rows]
+
+            batch = deduplicate_batch(raw, max_age_days=settings.JOB_RETENTION_DAYS)
+            accepted_jobs: list[CanonicalJob] = []
+            accepted = 0
+            for candidate in batch.candidates:
+                job, created, _ = await _persist_candidate(db, candidate, run)
+                accepted += int(created); accepted_jobs.append(job)
+            await _refresh_matches(db, clusters, accepted_jobs)
+            run.raw_found = len(raw); run.accepted_unique = accepted
+            run.rejected = len(batch.rejections); run.status = "succeeded"; run.finished_at = _now()
+            await db.commit()
+            return {"status": "succeeded", "run_id": run.id, "pool_read": len(raw), "candidates": len(batch.candidates), "newly_live": accepted, "rejected": len(batch.rejections)}
+        except Exception as exc:
+            await db.rollback(); run.status = "failed"; run.error_summary = str(exc)[:1000]; run.finished_at = _now(); db.add(run); await db.commit(); raise
+
+
 async def cleanup_warehouse() -> dict:
-    now = _now(); expire_before = now - timedelta(days=7); purge_before = now - timedelta(days=30)
+    now = _now(); expire_before = now - timedelta(days=settings.JOB_RETENTION_DAYS); purge_before = now - timedelta(days=settings.JOB_RETENTION_DAYS + 9)
     async with AsyncSessionLocal() as db:
         live = (await db.execute(select(CanonicalJob).where(CanonicalJob.status == "live", CanonicalJob.posted_at < expire_before))).scalars().all()
         for job in live: job.status = "expired"; job.description = None

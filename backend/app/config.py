@@ -61,6 +61,23 @@ class Settings(BaseSettings):
     # Deploy a single scheduler-owning API worker or set this false in replicas.
     ENABLE_SCHEDULER: bool = True
 
+    # Free Render sleeps through APScheduler cron and kills long jobs, so supply
+    # work runs as short externally-triggered ticks (GitHub Actions → the
+    # /api/internal/tick/* endpoints). INTERNAL_TASK_TOKEN guards those
+    # endpoints; while it is blank they 404 (invisible, not merely 401). When
+    # EXTERNAL_TICKS_ENABLED is true the in-process scheduler drops the supply
+    # cron jobs and keeps only startup-warm + digest, so the two don't double up.
+    INTERNAL_TASK_TOKEN: str = ""
+    EXTERNAL_TICKS_ENABLED: bool = False
+    # Hard monthly ceiling on SerpAPI searches (free plan ~100/mo). Spent on
+    # slug discovery only; job fetching no longer touches SerpAPI. 10 headroom.
+    SERPAPI_MONTHLY_BUDGET: int = 90
+
+    # How long a posting stays live/searchable. India ATS postings typically
+    # stay open 3-6 weeks, so 21 days (vs the old 7) ~triples visible inventory
+    # while staying fresh; the feed ranks older rows down and badges their age.
+    JOB_RETENTION_DAYS: int = 21
+
     # Gmail + Google Sign-In — new "AK24/7Jobs" Google Cloud project (read/label/send).
     GOOGLE_PROJECT_ID: str = ""
     GOOGLE_CLIENT_ID: str = ""
@@ -91,8 +108,7 @@ class Settings(BaseSettings):
     SCRAPE_CUTSHORT: bool = True       # custom adapter (__NEXT_DATA__ / JSON-LD)
     SCRAPE_WELLFOUND: bool = True      # custom adapter (stealth browser) — best-effort
     SCRAPE_HIRECT: bool = False        # mobile-API spike — off until an endpoint is confirmed
-    SCRAPE_HIRIST: bool = False        # hirist.tech (Next.js SSR) — opt-in; robots allows listing pages (Crawl-delay 10)
-    SCRAPE_HIRIST: bool = True
+    SCRAPE_HIRIST: bool = True         # hirist.tech (Next.js SSR); robots allows listing pages (Crawl-delay 10)
     HIRIST_API_BASE: str = ""          # reserved if a hirist JSON API is later confirmed
 
     # Comma-separated proxies for Tier-3 (e.g. "http://user:pass@host:port,..").

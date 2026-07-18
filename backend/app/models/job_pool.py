@@ -9,7 +9,8 @@ import-to-profile endpoint.
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Text, Float, DateTime
+from sqlalchemy import String, Text, Float, DateTime, Computed
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -43,4 +44,26 @@ class JobPool(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         index=True,
+    )
+    # ── Admission + ranking (populated at ingest; see services/job_admission) ──
+    india_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    employment_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # DB-generated; declared Computed so the ORM excludes them from INSERT/UPDATE
+    # (Postgres rejects any explicit value into a GENERATED ALWAYS column).
+    content_key: Mapped[str | None] = mapped_column(
+        String(128),
+        Computed("md5(lower(coalesce(company,'')) || '|' || lower(coalesce(title,'')))", persisted=True),
+        nullable=True,
+    )
+    search_tsv: Mapped[str | None] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "setweight(to_tsvector('simple', coalesce(title,'')), 'A') || "
+            "setweight(to_tsvector('simple', coalesce(company,'')), 'B') || "
+            "setweight(to_tsvector('simple', coalesce(location,'')), 'C')",
+            persisted=True,
+        ),
+        nullable=True,
     )

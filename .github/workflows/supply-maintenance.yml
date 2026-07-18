@@ -1,0 +1,64 @@
+name: Supply maintenance
+
+# The slower housekeeping loop, kept separate so a long revalidation pass can't
+# delay the frequent ingest/probe ticks. Same two secrets as supply-ticks.yml.
+
+on:
+  schedule:
+    - cron: '30 */2 * * *'    # revalidate every 2h
+    - cron: '20 20 * * *'     # cleanup daily ~01:50 IST (20:20 UTC)
+    - cron: '0 */6 * * *'     # slug harvest every 6h
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Which maintenance task to run'
+        required: true
+        default: revalidate
+        type: choice
+        options: [revalidate, cleanup, harvest]
+
+jobs:
+  revalidate:
+    # 2-hourly schedule OR manual "revalidate"
+    if: >-
+      github.event.schedule == '30 */2 * * *' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'revalidate')
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS -X POST "$BASE/api/internal/tick/revalidate?batch=150" \
+            -H "X-Internal-Token: $TOK" \
+            --max-time 180 --retry 3 --retry-connrefused --retry-delay 20
+        env:
+          BASE: ${{ secrets.SUPPLY_API_BASE }}
+          TOK: ${{ secrets.INTERNAL_TASK_TOKEN }}
+
+  cleanup:
+    if: >-
+      github.event.schedule == '20 20 * * *' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'cleanup')
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS -X POST "$BASE/api/internal/tick/cleanup" \
+            -H "X-Internal-Token: $TOK" \
+            --max-time 180 --retry 3 --retry-connrefused --retry-delay 20
+        env:
+          BASE: ${{ secrets.SUPPLY_API_BASE }}
+          TOK: ${{ secrets.INTERNAL_TASK_TOKEN }}
+
+  harvest:
+    # Grows the candidate queue. Endpoint arrives in Stage 3 — tolerated until then.
+    if: >-
+      github.event.schedule == '0 */6 * * *' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'harvest')
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS -X POST "$BASE/api/internal/tick/slug-harvest?source=commoncrawl" \
+            -H "X-Internal-Token: $TOK" \
+            --max-time 180 --retry 2 --retry-connrefused --retry-delay 20 \
+          || echo "harvest tick unavailable (endpoint may not be deployed yet)"
+        env:
+          BASE: ${{ secrets.SUPPLY_API_BASE }}
+          TOK: ${{ secrets.INTERNAL_TASK_TOKEN }}

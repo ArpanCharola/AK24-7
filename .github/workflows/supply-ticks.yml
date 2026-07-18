@@ -1,0 +1,56 @@
+name: Supply ticks
+
+# The frequent supply loop. Render free sleeps through its own in-process cron
+# and kills long jobs, so GitHub drives short ticks against the deployed API.
+# Each curl is the whole job — the first one of the hour also warms the sleeping
+# instance (that's what --retry-connrefused + a long --max-time absorb).
+#
+# Requires two repo secrets:
+#   SUPPLY_API_BASE     e.g. https://ak247-api.onrender.com
+#   INTERNAL_TASK_TOKEN must match the backend's INTERNAL_TASK_TOKEN env var
+#
+# NOTE: GitHub disables scheduled workflows after 60 days of repo inactivity,
+# and free cron can run 5-20 min late. Treat cadence as best-effort; the ticks
+# are idempotent and resumable, so a missed or doubled run is harmless.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 min (UTC)
+  workflow_dispatch: {}       # manual runs for verification
+
+concurrency:
+  group: supply-ticks
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ingest sweep (also warms the instance)
+        run: |
+          curl -fsS -X POST "$BASE/api/internal/tick/ingest?budget_seconds=50" \
+            -H "X-Internal-Token: $TOK" \
+            --max-time 180 --retry 3 --retry-connrefused --retry-delay 20 \
+          || echo "ingest tick unavailable (endpoint may not be deployed yet)"
+        env:
+          BASE: ${{ secrets.SUPPLY_API_BASE }}
+          TOK: ${{ secrets.INTERNAL_TASK_TOKEN }}
+
+      - name: Promote pool → warehouse (feeds Admin + Recommended)
+        run: |
+          curl -fsS -X POST "$BASE/api/internal/tick/promote?limit=1000" \
+            -H "X-Internal-Token: $TOK" \
+            --max-time 180 --retry 2 --retry-connrefused --retry-delay 15 \
+          || echo "promote tick unavailable (endpoint may not be deployed yet)"
+        env:
+          BASE: ${{ secrets.SUPPLY_API_BASE }}
+          TOK: ${{ secrets.INTERNAL_TASK_TOKEN }}
+
+      - name: Slug probe
+        run: |
+          curl -fsS -X POST "$BASE/api/internal/tick/slug-probe?budget_seconds=50" \
+            -H "X-Internal-Token: $TOK" \
+            --max-time 120 --retry 2 --retry-connrefused --retry-delay 15
+        env:
+          BASE: ${{ secrets.SUPPLY_API_BASE }}
+          TOK: ${{ secrets.INTERNAL_TASK_TOKEN }}
