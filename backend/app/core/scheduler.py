@@ -22,6 +22,13 @@ scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 # UI has enough inventory for search and a full page of recommendations.
 MIN_FRESH_POOL_JOBS = 100
 MIN_LIVE_CANONICAL_JOBS = 50
+STARTUP_SUPPLY_ROLES = (
+    "Software Engineer",
+    "Frontend Developer",
+    "Backend Developer",
+    "AI/ML Engineer",
+    "Data Analyst",
+)
 
 
 async def _run_scheduled_discovery() -> None:
@@ -69,11 +76,11 @@ async def _run_pool_warm() -> None:
         logger.error("pool warm error: %s", repr(e)[:200])
 
 
-async def _run_shared_aggregation() -> None:
+async def _run_shared_aggregation(trigger: str = "scheduled") -> None:
     """Run the warehouse once for all active demand clusters, never per user."""
     try:
         from app.services.aggregation import run_aggregation
-        await run_aggregation(trigger="scheduled")
+        await run_aggregation(trigger=trigger)
     except Exception as e:  # noqa: BLE001
         logger.error("shared aggregation error: %s", repr(e)[:200])
 
@@ -125,19 +132,36 @@ async def _warm_warehouse_if_needed() -> None:
             fresh_pool_jobs,
             live_canonical_jobs,
         )
-        if fresh_pool_jobs < MIN_FRESH_POOL_JOBS:
-            await _run_entry_level_supply()
         if live_canonical_jobs < MIN_LIVE_CANONICAL_JOBS:
-            await _run_shared_aggregation()
+            # Build profile recommendations first with fast/reliable sources.
+            # Full Tier-3 collection can take hours on a small Render worker.
+            await _run_shared_aggregation(trigger="startup")
+        if fresh_pool_jobs < MIN_FRESH_POOL_JOBS:
+            await _run_entry_level_supply(
+                roles=STARTUP_SUPPLY_ROLES,
+                use_tier3=False,
+            )
     except Exception as e:  # noqa: BLE001
         logger.error("startup warehouse warm error: %s", repr(e)[:300])
 
 
-async def _run_entry_level_supply() -> None:
+async def _run_entry_level_supply(
+    *,
+    roles: tuple[str, ...] | None = None,
+    use_tier3: bool = True,
+) -> None:
     """Refresh broad fresher/entry-level India tech jobs into JobPool."""
     try:
         from app.services.entry_level_supply import backfill_entry_level_supply
-        await backfill_entry_level_supply(posted_within_days=7, use_stealth=False)
+        await backfill_entry_level_supply(
+            roles=roles,
+            posted_within_days=7,
+            use_stealth=False,
+            use_tier3=use_tier3,
+            # SerpAPI is now consumed by demand-driven aggregation. Avoid a
+            # broad 15-role credit burn in the general public-supply job.
+            use_serpapi=False,
+        )
     except Exception as e:  # noqa: BLE001
         logger.error("entry-level supply error: %s", repr(e)[:200])
 

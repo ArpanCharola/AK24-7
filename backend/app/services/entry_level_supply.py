@@ -138,6 +138,8 @@ async def backfill_entry_level_supply(
     posted_within_days: int = 7,
     max_roles: int | None = None,
     use_stealth: bool = False,
+    use_tier3: bool = True,
+    use_serpapi: bool = True,
 ) -> dict:
     selected_roles = list(dict.fromkeys(r.strip() for r in (roles or ENTRY_LEVEL_TECH_ROLES) if r and r.strip()))
     if max_roles is not None:
@@ -157,11 +159,15 @@ async def backfill_entry_level_supply(
                 "work_arrangements": "",
                 "excluded_companies": "",
             }
-            jobs = await agent.discover(profile, queries)
-            serpapi_jobs = await _serpapi_supply_jobs(
-                role=role,
-                queries=queries,
-                posted_within_days=posted_within_days,
+            jobs = await agent.discover(profile, queries, include_tier3=use_tier3)
+            serpapi_jobs = (
+                await _serpapi_supply_jobs(
+                    role=role,
+                    queries=queries,
+                    posted_within_days=posted_within_days,
+                )
+                if use_serpapi
+                else []
             )
             all_jobs = [*jobs, *serpapi_jobs]
             accepted = [job for job in all_jobs if _is_supply_match(role, job)]
@@ -187,6 +193,8 @@ async def backfill_entry_level_supply(
         "locations": selected_locations,
         "posted_within_days": posted_within_days,
         "use_stealth": use_stealth,
+        "use_tier3": use_tier3,
+        "use_serpapi": use_serpapi,
         "roles": role_reports,
         "counts": counts,
     }

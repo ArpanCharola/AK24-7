@@ -533,7 +533,13 @@ class JobDiscoveryAgent:
     """Fans out India job sources across three tiers and returns normalized,
     deduped, India-only, staffing-filtered job dicts."""
 
-    async def discover(self, profile: dict, queries: list[str] | None = None) -> list[dict]:
+    async def discover(
+        self,
+        profile: dict,
+        queries: list[str] | None = None,
+        *,
+        include_tier3: bool = True,
+    ) -> list[dict]:
         from app.agents.ats_sources import fetch_all_ats
         from app.agents.scrape_sources import fetch_all_scraped
         from app.agents.india_board_sources import fetch_all_india_boards
@@ -541,6 +547,7 @@ class JobDiscoveryAgent:
         from app.agents.hirect_source import fetch_all_hirect
         from app.agents.hirist_source import fetch_all_hirist_tech
         from app.services.jobs_aggregators import fetch_all_aggregators
+        from app.services.serpapi_jobs import search_serpapi_jobs
 
         slugs = await get_india_slugs()
         locations = [l.strip() for l in (profile.get("locations") or "").split(",") if l.strip()]
@@ -557,15 +564,23 @@ class JobDiscoveryAgent:
                 r.strip() for r in (profile.get("target_roles") or "").split(",") if r.strip()
             ] or ["Software Engineer"]
 
+        serpapi_profile = {**profile, "search_query": ", ".join(queries[:2])}
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            tiered = await asyncio.gather(
+            tasks = [
                 fetch_all_ats(client, slugs, profile, posted_within),
                 fetch_all_aggregators(client, queries, locations),
-                fetch_all_scraped(queries, locations),
-                fetch_all_india_boards(client, queries, locations),
-                fetch_all_wellfound(queries, locations),
-                fetch_all_hirect(client, queries, locations),
-                fetch_all_hirist_tech(client, queries, locations),
+                search_serpapi_jobs(client, serpapi_profile, posted_within, max_pages=2),
+            ]
+            if include_tier3:
+                tasks.extend([
+                    fetch_all_scraped(queries, locations),
+                    fetch_all_india_boards(client, queries, locations),
+                    fetch_all_wellfound(queries, locations),
+                    fetch_all_hirect(client, queries, locations),
+                    fetch_all_hirist_tech(client, queries, locations),
+                ])
+            tiered = await asyncio.gather(
+                *tasks,
                 return_exceptions=True,
             )
 

@@ -387,7 +387,10 @@ async def run_aggregation(trigger: str = "scheduled") -> dict:
             agent = JobDiscoveryAgent()
             for cluster in clusters:
                 try:
-                    jobs = await agent.discover(_profile_for_cluster(cluster))
+                    jobs = await agent.discover(
+                        _profile_for_cluster(cluster),
+                        include_tier3=trigger != "startup",
+                    )
                     cluster.status = "active"; cluster.last_run_at = _now(); cluster.next_run_at = _now() + timedelta(hours=12)
                     for item in jobs: raw_by_source[str(item.get("source") or "unknown")].append(item)
                 except Exception as exc:
