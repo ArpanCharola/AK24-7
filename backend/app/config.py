@@ -80,9 +80,13 @@ class Settings(BaseSettings):
     # off is skipped entirely; a source that is on but fails degrades to [].
     SCRAPE_INDEED: bool = True
     SCRAPE_GOOGLE: bool = True
-    SCRAPE_NAUKRI: bool = True
+    # Naukri currently challenges direct JobSpy traffic with reCAPTCHA. Keep
+    # it opt-in so a normal local run does not emit repeated 406 errors.
+    SCRAPE_NAUKRI: bool = False
     SCRAPE_LINKEDIN: bool = True       # Cloudflare/rate-limited — best-effort without proxies
-    SCRAPE_GLASSDOOR: bool = True      # Cloudflare/rate-limited — best-effort without proxies
+    # Glassdoor commonly rejects direct scraper traffic (403). Enable it only
+    # when SCRAPE_PROXIES points at a proxy known to work for the board.
+    SCRAPE_GLASSDOOR: bool = False
     SCRAPE_INSTAHYRE: bool = True      # custom adapter (internal JSON API)
     SCRAPE_CUTSHORT: bool = True       # custom adapter (__NEXT_DATA__ / JSON-LD)
     SCRAPE_WELLFOUND: bool = True      # custom adapter (stealth browser) — best-effort
