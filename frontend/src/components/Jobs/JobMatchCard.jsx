@@ -48,9 +48,17 @@ export default function JobMatchCard({ job, onRemove, removing = false }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted-foreground">
-        {job.location && <span className="inline-flex items-center gap-1"><MapPin size={12} />{job.location}</span>}
+        {job.location
+          ? <span className="inline-flex items-center gap-1"><MapPin size={12} />{job.location}</span>
+          : <span className="inline-flex items-center gap-1 italic opacity-70"><MapPin size={12} />Location not specified</span>}
         {job.work_arrangement && <span className="inline-flex items-center gap-1"><Briefcase size={12} />{job.work_arrangement}</span>}
         {salary && <span className="tnum">{salary}</span>}
+        {job.employment_type === "internship" && <span className="pill pill-brand">Internship</span>}
+        {/* An India-confidence below the default cut means the row leaked in via
+            an explicit filter; flag it so the low geo-certainty is visible. */}
+        {job.india_confidence != null && job.india_confidence < 0.5 && (
+          <span className="pill" title="Location could not be confirmed as India">Location unconfirmed</span>
+        )}
         {job.posted_at && <span className="inline-flex items-center gap-1 sr-only"><Clock size={12} />{timeAgo(job.posted_at)}</span>}
         {job.is_early_applicant && (
           <span className="pill pill-brand"><Zap size={11} /> Early applicant</span>

@@ -62,22 +62,6 @@ function hasRecommendationProfile(profile) {
   );
 }
 
-function normalizeLocationValue(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function locationMatchesSelection(jobLocation, selectedLocations) {
-  const normalizedJobLocation = normalizeLocationValue(jobLocation);
-  const requested = (selectedLocations || []).map(normalizeLocationValue).filter(Boolean);
-  if (!requested.length || requested.includes("india")) return true;
-  return requested.some((location) => {
-    if (["remote india", "pan india"].includes(location)) {
-      return normalizedJobLocation.includes("remote") || normalizedJobLocation.includes("india");
-    }
-    return normalizedJobLocation.includes(location);
-  });
-}
-
 function SearchLocationPicker({ value, onChange }) {
   const [needle, setNeedle] = useState("");
   const selected = value.length ? value : ["India"];
@@ -260,38 +244,43 @@ export default function Jobs() {
     staleTime: 60000,
   });
 
+  // Server-side filtering + true pagination. The backend now filters by city
+  // (CSV) and India-confidence and paginates in SQL, so we page by offset and
+  // append — no client-side location filtering over a single page.
+  const SEARCH_PAGE = 50;
+  const [searchJobs, setSearchJobs] = useState([]);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchHasMore, setSearchHasMore] = useState(false);
+
   const searchMutation = useMutation({
-    mutationFn: async () => {
-      const requestedLocations = searchLocations.length ? searchLocations : ["India"];
-      const warehouseScope = requestedLocations.includes("India") ? ["India"] : requestedLocations;
+    mutationFn: async ({ offset = 0 } = {}) => {
+      const requested = searchLocations.length ? searchLocations : ["India"];
+      // "India" means no city narrowing; otherwise pass the real CSV selection.
+      const locationParam = requested.includes("India") ? undefined : requested.join(",");
       const response = await publicJobsApi.browse({
-        role: searchRole,
-        location: "India",
+        role: searchRole || undefined,
+        location: locationParam,
         experience: searchExperience,
         workArrangement: searchWorkMode || undefined,
         postedWithinDays: searchFreshness || 7,
-        limit: warehouseScope.length > 1 ? 150 : 100,
+        limit: SEARCH_PAGE,
+        offset,
       });
-      const seen = new Set();
-      const jobs = [];
-      for (const job of response.data || []) {
-        if (!locationMatchesSelection(job.location, warehouseScope)) continue;
-        const key = job.job_url || `${job.company}-${job.title}-${job.location}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        jobs.push(job);
-      }
-      return {
-        query: searchRole,
-        location: warehouseScope.join(", "),
-        jobs,
-        matched: jobs.length,
-        locationsSearched: warehouseScope.length,
-        fetchedFromWarehouse: response.data?.length || 0,
-      };
+      return { page: response.data || [], offset };
     },
-    onSuccess: () => setSearchRan(true),
+    onSuccess: ({ page, offset }) => {
+      setSearchJobs((prev) => {
+        if (offset === 0) return page;
+        const seen = new Set(prev.map((j) => j.job_url || j.id));
+        return [...prev, ...page.filter((j) => !seen.has(j.job_url || j.id))];
+      });
+      setSearchOffset(offset + page.length);
+      setSearchHasMore(page.length === SEARCH_PAGE);
+      setSearchRan(true);
+    },
   });
+
+  const searchedJobs = searchJobs;
 
   const visibleRecommended = useMemo(() => {
     const recommendedJobs = Array.isArray(matchesQuery.data) ? matchesQuery.data : [];
@@ -299,8 +288,6 @@ export default function Jobs() {
     if (!needle) return recommendedJobs;
     return recommendedJobs.filter((job) => [job.title, job.company, job.location].some((value) => String(value || "").toLowerCase().includes(needle)));
   }, [matchesQuery.data, query]);
-
-  const searchedJobs = Array.isArray(searchMutation.data?.jobs) ? searchMutation.data.jobs : [];
 
   function resetFilters() {
     setQuery("");
@@ -313,8 +300,15 @@ export default function Jobs() {
 
   function runSearch(event) {
     event.preventDefault();
-    if (!searchRole.trim()) return;
-    searchMutation.mutate();
+    // Role is optional now — a bare city/experience browse is valid supply.
+    setSearchJobs([]);
+    setSearchOffset(0);
+    setSearchHasMore(false);
+    searchMutation.mutate({ offset: 0 });
+  }
+
+  function loadMoreSearch() {
+    searchMutation.mutate({ offset: searchOffset });
   }
 
   return (
@@ -527,11 +521,25 @@ export default function Jobs() {
               </p>
             </div>
           ) : (
-            <div className="job-grid">
-              {searchedJobs.map((job) => (
-                <JobMatchCard key={job.id ?? job.job_url} job={job} />
-              ))}
-            </div>
+            <>
+              <div className="job-grid">
+                {searchedJobs.map((job) => (
+                  <JobMatchCard key={job.id ?? job.job_url} job={job} />
+                ))}
+              </div>
+              {searchHasMore && (
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={loadMoreSearch}
+                    disabled={searchMutation.isPending}
+                    className="btn-secondary !rounded-full !px-6 !py-2.5 text-[13px]"
+                  >
+                    {searchMutation.isPending ? "Loading…" : `Load more (${searchedJobs.length} shown)`}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
