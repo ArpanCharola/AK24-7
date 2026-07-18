@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
+# A merely non-empty warehouse is not useful enough for the Jobs experience.
+# Keep these deliberately modest for the free Render worker while ensuring the
+# UI has enough inventory for search and a full page of recommendations.
+MIN_FRESH_POOL_JOBS = 100
+MIN_LIVE_CANONICAL_JOBS = 50
+
 
 async def _run_scheduled_discovery() -> None:
     """Discover + refresh feeds for all active search profiles."""
@@ -73,7 +79,10 @@ async def _run_shared_aggregation() -> None:
 
 
 def _warehouse_needs_warm(fresh_pool_jobs: int, live_canonical_jobs: int) -> bool:
-    return fresh_pool_jobs <= 0 or live_canonical_jobs <= 0
+    return (
+        fresh_pool_jobs < MIN_FRESH_POOL_JOBS
+        or live_canonical_jobs < MIN_LIVE_CANONICAL_JOBS
+    )
 
 
 async def _warm_warehouse_if_needed() -> None:
@@ -116,9 +125,9 @@ async def _warm_warehouse_if_needed() -> None:
             fresh_pool_jobs,
             live_canonical_jobs,
         )
-        if fresh_pool_jobs <= 0:
+        if fresh_pool_jobs < MIN_FRESH_POOL_JOBS:
             await _run_entry_level_supply()
-        if live_canonical_jobs <= 0:
+        if live_canonical_jobs < MIN_LIVE_CANONICAL_JOBS:
             await _run_shared_aggregation()
     except Exception as e:  # noqa: BLE001
         logger.error("startup warehouse warm error: %s", repr(e)[:300])

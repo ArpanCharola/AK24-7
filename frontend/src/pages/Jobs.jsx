@@ -212,6 +212,7 @@ export default function Jobs() {
   const desiredRoles = useMemo(() => asList(profile?.desired_roles), [profile?.desired_roles]);
   const profileSkills = useMemo(() => asList(profile?.skills), [profile?.skills]);
   const profileReady = hasRecommendationProfile(profile);
+  const activeMode = !profileLoading && !profileReady && mode === "recommended" ? "search" : mode;
   const defaultExperience = profileExperience(profile);
 
   useEffect(() => {
@@ -318,7 +319,7 @@ export default function Jobs() {
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 md:px-8">
-      <JobsTopHero mode={mode} setMode={setMode} profileReady={profileReady} searchedJobsCount={searchedJobs.length} />
+      <JobsTopHero mode={activeMode} setMode={setMode} profileReady={profileReady} searchedJobsCount={searchedJobs.length} />
 
       {profileLoading ? (
         <div className="glass-subtle h-16 animate-pulse rounded-2xl" />
@@ -326,11 +327,11 @@ export default function Jobs() {
         <div className="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-[13px] text-warning">
           Sign in again to load recommendations from your profile. Search still works from the Search Jobs tab.
         </div>
-      ) : mode === "recommended" ? (
+      ) : activeMode === "recommended" ? (
         <ProfileGate completed={completed} required={3} />
       ) : null}
 
-      {mode === "recommended" && !profileLoading && profileReady && (
+      {activeMode === "recommended" && !profileLoading && profileReady && (
         <>
           <section className="glass-subtle rounded-[28px] p-4 md:p-5" aria-label="Recommended job filters">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -430,7 +431,7 @@ export default function Jobs() {
         </>
       )}
 
-      {mode === "search" && (
+      {activeMode === "search" && (
         <>
           <form onSubmit={runSearch} className="glass-subtle rounded-[28px] p-4 md:p-5" aria-label="Manual job search">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
